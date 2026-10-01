@@ -37,7 +37,8 @@ async function detectSuspicious(username, mac, sessions) {
 export async function syncOnce(io) {
   if (running) return; running = true;
   try {
-    const [res, identity, users, active] = await Promise.all([getRouterResources(), getIdentity(), getHotspotUsers(), getActiveHotspotUsers()]);
+    const res = await getRouterResources(); // first call fails fast when the router is unreachable (no 4 queued timeouts)
+    const [identity, users, active] = await Promise.all([getIdentity(), getHotspotUsers(), getActiveHotspotUsers()]);
     const hosts = await getHostNames();
     const now = Date.now();
     if (now - lastSys > 30000) { lastSys = now; try { sysCache = await getSystemDetails(); } catch { /* optional data */ } }
@@ -121,7 +122,8 @@ export async function syncOnce(io) {
     sum.totalData = sum.upload + sum.download;
     Object.assign(live, { router: { online: true, error: null, identity, ...res }, system: sysCache, vouchers, sessions: active, summary: sum, capBytes: config.capBytes, lastSync: new Date().toISOString() });
   } catch (e) {
-    Object.assign(live, { router: { online: false, error: e.message }, system: null, vouchers: [], sessions: [], summary: null }); // no fake data when offline
+    const m = config.mikrotik, why = /timed out|ETIMEDOUT|ECONNREFUSED|EHOSTUNREACH|ENOTFOUND|ENETUNREACH/i.test(e.message) ? `Router not reachable from this server at ${m.host || '(MIKROTIK_HOST not set)'}:${m.port} - ${e.message}. Check MIKROTIK_HOST/PORT, the router firewall and that the API service is enabled.` : e.message;
+    Object.assign(live, { router: { online: false, error: why }, system: null, vouchers: [], sessions: [], summary: null }); // no fake data when offline
     if (state.lastError) console.error('MikroTik sync failed:', e.message);
   } finally { running = false; io?.emit('update', live); }
 }
