@@ -88,12 +88,13 @@ function Usage({ v, cap }) {
 }
 
 function Login({ done }) {
-  const [u, setU] = useState(''), [p, setP] = useState(''), [e, setE] = useState('');
+  const [u, setU] = useState(''), [p, setP] = useState(''), [e, setE] = useState(''), [wake, setWake] = useState('Checking server…');
+  useEffect(() => { let on = true; (async () => { for (let i = 0; i < 8 && on; i++) { try { const r = await fetch('/health'); if (r.ok) return on && setWake(''); } catch { /* retry */ } on && setWake('Server is waking up, please wait…'); await new Promise(r => setTimeout(r, 4000)); } on && setWake('Server not reachable - check your connection and reload.'); })(); return () => { on = false; }; }, []);
   const go = async () => { try { const r = await api('/auth/login', { method: 'POST', body: { username: u, password: p } }); sessionStorage.setItem('jwt', r.token); sessionStorage.setItem('role', r.role); done(); } catch (x) { setE(x.message); } };
   const inp = 'bg-[color:var(--input)] border border-[color:var(--border)] rounded w-full p-2 text-sm';
   return <div className="min-h-screen grid place-items-center"><div className="bg-[color:var(--panel)] border border-[color:var(--border)] p-6 rounded w-80 space-y-3"><h1 className="font-semibold text-lg">Hotspot Monitoring</h1>
     <input className={inp} placeholder="Username" value={u} onChange={x => setU(x.target.value)} /><input className={inp} type="password" placeholder="Password" value={p} onChange={x => setP(x.target.value)} onKeyDown={x => x.key === 'Enter' && go()} />
-    {e && <div className="text-[color:var(--red)] text-sm">{e}</div>}<button className="bg-[color:var(--primary)] hover:bg-[color:var(--primaryh)] text-white w-full p-2 rounded text-sm font-medium" onClick={go}>Sign in</button></div></div>;
+    {wake && <div className="text-[color:var(--muted)] text-xs">{wake}</div>}{e && <div className="text-[color:var(--red)] text-sm">{e}</div>}<button className="bg-[color:var(--primary)] hover:bg-[color:var(--primaryh)] text-white w-full p-2 rounded text-sm font-medium" onClick={go}>Sign in</button></div></div>;
 }
 
 const PAGES = ['Network Overview', 'Dashboard', 'Vouchers', 'Active Users', 'Devices', 'Data Usage', 'Security Alerts', 'Blocked Devices', 'Reports', 'Audit Logs', 'Settings'];
