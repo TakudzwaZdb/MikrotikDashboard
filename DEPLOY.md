@@ -1,3 +1,4 @@
+> **Render:** see **RENDER.md** (render.yaml included). 
 > **Simplest option (no server, no card):** host on your Windows laptop - see **LAPTOP-HOSTING.md**. The rest of this file is for an always-on cloud server.
 
 # Free hosting guide (always-on VM + Docker + free HTTPS)

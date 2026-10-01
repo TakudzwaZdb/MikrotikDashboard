@@ -1,0 +1,48 @@
+# Render Blueprint: New > Blueprint > pick this repo. Creates the web service + Postgres.
+services:
+  - type: web
+    name: mikrotik-voucher-dashboard
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free                 # free sleeps when idle; use a paid always-on plan for real use (see RENDER.md)
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL      # internal connection string of the database below
+        fromDatabase:
+          name: mikrotik-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_USER
+        value: admin
+      - key: ADMIN_PASSWORD    # you type this in the Render dashboard (10+ chars)
+        sync: false
+      - key: MIKROTIK_HOST     # router address reachable FROM THE INTERNET (see RENDER.md warning)
+        sync: false
+      - key: MIKROTIK_PORT
+        value: "8728"
+      - key: MIKROTIK_USERNAME
+        value: dashboard
+      - key: MIKROTIK_PASSWORD
+        sync: false
+      - key: MIKROTIK_USE_TLS
+        value: "false"
+      - key: USAGE_POLL_INTERVAL
+        value: "10"
+      - key: AUTO_DISCONNECT_SUSPICIOUS
+        value: "false"
+      - key: AUTO_BLOCK_SUSPICIOUS
+        value: "false"
+      - key: DATA_CAP_GB
+        value: "2.5"
+      - key: DATA_CAP_REMOVE_USER
+        value: "true"
+      - key: DATA_CAP_BLOCK_DEVICE_HOURS
+        value: "24"
+
+databases:
+  - name: mikrotik-db
+    databaseName: mikrotik_dashboard
+    user: dashboard
+    plan: free                 # free Render Postgres expires after ~30 days; upgrade or use Neon/Supabase (see RENDER.md)
