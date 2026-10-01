@@ -1,3 +1,17 @@
+# MikroTik Voucher Dashboard - one application
+
+One Node project (root `package.json`): the backend (`backend/`) serves both the API and the built website (`frontend/`).
+
+```
+npm install            # installs everything (backend + frontend)
+cp .env.example .env   # fill in DATABASE_URL, JWT_SECRET, ADMIN_PASSWORD, MIKROTIK_*
+npm run build          # builds the website into frontend/dist
+npm start              # applies DB migrations, creates the admin user, starts on http://localhost:8080
+```
+Development (hot reload): `npm run dev` (API on :8080, website on :5173).
+Hosting guides: LAPTOP-HOSTING.md, RENDER.md, DEPLOY.md.
+
+---
 # MikroTik Voucher Dashboard
 
 Admin/monitoring layer over an existing **MikroTik Hotspot + Mikhmon** setup. MikroTik RouterOS is the source of truth for users, sessions and authentication. PostgreSQL only holds a cache, usage snapshots, alerts and audit logs. Mikhmon is never modified.
@@ -43,16 +57,15 @@ sudo -u postgres psql -c "CREATE DATABASE mikrotik_dashboard OWNER dashboard;"
 
 ## 6. Install and configure
 ```
-cd backend && cp .env.example .env     # fill in every value; JWT_SECRET: openssl rand -hex 32
+cp .env.example .env     # fill in every value; JWT_SECRET: openssl rand -hex 32
 npm install
-npm run migrate
-npm run seed                           # creates admin from ADMIN_USER / ADMIN_PASSWORD
-npm start
-cd ../frontend && npm install && npm run dev     # http://localhost:5173
+npm run build            # builds the website
+npm start                # migrate + create admin (ADMIN_USER / ADMIN_PASSWORD) + start on :8080
 ```
+For development with hot reload: `npm run dev` (website on http://localhost:5173).
 
 ## 7. Production
-`cd frontend && npm run build`, serve `dist/` with nginx and proxy `/api` and `/socket.io` (with WebSocket upgrade) to port 8080. Terminate HTTPS at nginx, run the backend with systemd or pm2, set `CORS_ORIGIN` to the real origin, keep PostgreSQL and the RouterOS API off the public internet.
+`npm run build && npm start` serves the website and the API from one process on port 8080. Put nginx or a tunnel in front for HTTPS (WebSocket upgrade for `/socket.io`), run it with systemd or pm2, set `CORS_ORIGIN` to the real origin, keep PostgreSQL and the RouterOS API off the public internet. Or use Docker / Render (see DEPLOY.md, RENDER.md).
 
 ## 8. Block behaviour and limits
 - Disconnect: removes the entry from `/ip/hotspot/active` and re-queries to confirm it is gone.

@@ -1,20 +1,11 @@
-# ---- build the frontend ----
-FROM node:20-bookworm-slim AS web
-WORKDIR /web
-COPY frontend/package*.json ./
-RUN npm ci
-COPY frontend/ ./
-RUN npm run build
-
-# ---- runtime: API + built frontend in one container ----
+# One application image: builds the website, then the Node server serves API + website together.
 FROM node:20-bookworm-slim
-ENV NODE_ENV=production STATIC_DIR=/app/public PORT=8080
+ENV NODE_ENV=production PORT=8080
 WORKDIR /app
-COPY backend/package*.json ./
-RUN npm ci --omit=dev
-COPY backend/ ./
-COPY --from=web /web/dist ./public
+COPY package*.json ./
+RUN npm ci --include=dev
+COPY . .
+RUN npm run build && npm prune --omit=dev
 USER node
 EXPOSE 8080
-# apply migrations, (re)create the admin login, then start
-CMD ["sh", "-c", "npm run migrate && npm run seed && node src/server.js"]
+CMD ["npm", "start"]

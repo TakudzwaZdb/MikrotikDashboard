@@ -11,7 +11,15 @@ Render web services cannot join a VPN/WireGuard/SSH tunnel and their outgoing IP
 - Free web service sleeps after ~15 min with no visitors. While asleep the app does NOT poll the router, so data caps are not enforced and usage history has gaps. Use a paid always-on instance for real use.
 - Free Postgres expires after ~30 days. Use a paid database, or a free external one (Neon/Supabase) and set `DATABASE_URL` to its URL plus `DATABASE_SSL=true`.
 
-## Steps
+## Manual setup (New > Web Service) - the form you are on
+- **Language:** Node
+- **Build Command:** `npm install --include=dev && npm run build`
+- **Start Command:** `npm start`
+- **Health Check Path (Advanced):** `/health`
+- Environment variables: see below. Create the PostgreSQL database first and use its *Internal Database URL* as `DATABASE_URL`.
+(`npm start` creates the tables, creates the admin user and starts the single application that serves both the website and the API.)
+
+## Steps (Blueprint)
 1. Put the project in a GitHub repository (the folder with `Dockerfile` and `render.yaml` at the repo root). Do NOT commit any `.env` file.
 2. render.com > **New > Blueprint** > connect the repo > it reads `render.yaml` and proposes the web service + database.
 3. When prompted, fill the secret values: `ADMIN_PASSWORD`, `MIKROTIK_HOST` (public IP / DDNS name), `MIKROTIK_PASSWORD`. (Edit `MIKROTIK_PORT` / `MIKROTIK_USE_TLS` if you use API-SSL.)

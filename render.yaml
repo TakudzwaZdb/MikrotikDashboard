@@ -2,11 +2,13 @@
 services:
   - type: web
     name: mikrotik-voucher-dashboard
-    runtime: docker
-    dockerfilePath: ./Dockerfile
+    runtime: node              # one application: build the website, then one Node server serves everything
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start
     plan: free                 # free sleeps when idle; use a paid always-on plan for real use (see RENDER.md)
     healthCheckPath: /health
     autoDeploy: true
+    # Node version comes from package.json engines (>=18)
     envVars:
       - key: DATABASE_URL      # internal connection string of the database below
         fromDatabase:

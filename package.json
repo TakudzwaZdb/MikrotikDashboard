@@ -1,0 +1,45 @@
+{
+  "name": "mikrotik-voucher-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "cd frontend && vite build",
+    "start": "npm run migrate && npm run seed && node backend/src/server.js",
+    "serve": "node backend/src/server.js",
+    "migrate": "node backend/src/database/migrate.js",
+    "seed": "node backend/src/database/seeds/seed.js",
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node --watch backend/src/server.js",
+    "dev:web": "cd frontend && vite"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "chart.js": "^4.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "node-routeros": "^1.6.9",
+    "pg": "^8.12.0",
+    "react": "^18.3.1",
+    "react-chartjs-2": "^5.2.0",
+    "react-dom": "^18.3.1",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.7.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "concurrently": "^9.0.1",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.6",
+    "vite": "^5.3.4"
+  }
+}
