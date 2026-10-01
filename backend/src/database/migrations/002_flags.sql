@@ -1,0 +1,2 @@
+ALTER TABLE vouchers_cache ADD COLUMN IF NOT EXISTS blocked BOOLEAN DEFAULT false;
+ALTER TABLE vouchers_cache ADD COLUMN IF NOT EXISTS limit_reached_at TIMESTAMPTZ;

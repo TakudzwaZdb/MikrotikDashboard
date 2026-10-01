@@ -1,0 +1,50 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dashboard
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: mikrotik_dashboard
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dashboard -d mikrotik_dashboard"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://dashboard:${DB_PASSWORD}@db:5432/mikrotik_dashboard
+      CORS_ORIGIN: https://${DOMAIN}
+    expose: ["8080"]
+    networks: [default]
+
+  caddy:            # automatic free HTTPS (Let's Encrypt) + WebSocket proxying
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+# fixed subnet so the SSH tunnel from the laptop can bind to the gateway address 172.28.0.1 (see SSH-TUNNEL.md)
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

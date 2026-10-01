@@ -1,0 +1,28 @@
+# Run everything on the Windows laptop (Docker Desktop). Public access is added with a tunnel (see LAPTOP-HOSTING.md).
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dashboard
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: mikrotik_dashboard
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dashboard -d mikrotik_dashboard"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://dashboard:${DB_PASSWORD}@db:5432/mikrotik_dashboard
+      CORS_ORIGIN: ${PUBLIC_URL}
+    ports: ["127.0.0.1:8080:8080"]   # only the laptop itself; the tunnel connects here
+
+volumes:
+  pgdata:
