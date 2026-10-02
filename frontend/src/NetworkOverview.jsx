@@ -141,7 +141,7 @@ function Combo({ rows }) {
 }
 
 /* ---------- page ---------- */
-export default function NetworkOverview({ live, hist, online, conn }) {
+export default function NetworkOverview({ live, hist, online, conn, onMenu }) {
   const rt = live?.router || {}, sm = live?.summary || {}, vs = live?.vouchers || [], ss = live?.sessions || [], sys = live?.system || {}, cap = live?.capBytes;
   const [hi, setHi] = useState(4), [now, setNow] = useState(new Date()), [daily, setDaily] = useState([]);
   useEffect(() => { const a = setInterval(() => setHi(h => (h + 1) % 7), 3500), b = setInterval(() => setNow(new Date()), 1000); return () => { clearInterval(a); clearInterval(b); }; }, []);
@@ -162,8 +162,9 @@ export default function NetworkOverview({ live, hist, online, conn }) {
 
   return <div className="nv-root">
     <div className="nv-head">
-      <div className="text-[11px] font-bold text-left leading-tight truncate"><span style={{ color: K.cy }}>◈ {rt.identity || 'Router'}</span><br /><span className="text-[color:#7fa8d0] font-semibold">{online ? `${rt.board || ''} · RouterOS ${rt.version || ''} · up ${rt.uptime || ''}` : (rt.error || 'MIKROTIK OFFLINE')}</span></div>
-      <div className="text-center leading-tight"><div className="nv-h1">Hotspot Network Center</div><div className="text-[11px] font-bold tracking-[.25em] uppercase" style={{ color: K.cy }}>Online supervision system</div></div>
+      <div className="flex items-center gap-3 min-w-0"><button type="button" className="nv-menu" onClick={onMenu} aria-label="Open menu" title="Open menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M3 6h18M3 12h18M3 18h18" /></svg></button>
+      <div className="text-[11px] font-bold text-left leading-tight truncate min-w-0"><span style={{ color: K.cy }}>◈ {rt.identity || 'Router'}</span><br /><span className="text-[color:#7fa8d0] font-semibold">{online ? `${rt.board || ''} · RouterOS ${rt.version || ''} · up ${rt.uptime || ''}` : 'Router offline - no data'}</span></div></div>
+      <div className="text-center leading-tight"><div className="nv-h1">EWZ Network Center</div><div className="text-[11px] font-bold tracking-[.25em] uppercase" style={{ color: K.cy }}>Online supervision system</div></div>
       <div className="text-right text-[11px] font-bold leading-tight"><span style={{ color: conn && online ? K.gr : K.rd }}>● {conn ? (online ? 'LIVE' : 'ROUTER OFFLINE') : 'RECONNECTING'}</span><br /><span className="text-[color:#7fa8d0] font-semibold tabular-nums">{now.toLocaleDateString()} {now.toLocaleTimeString([], { hour12: false })}</span></div>
     </div>
     <div className="nv-grid">

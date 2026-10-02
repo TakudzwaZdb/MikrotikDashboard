@@ -87,14 +87,54 @@ function Usage({ v, cap }) {
     <div className="text-[11px] text-[color:var(--muted)] mt-0.5">{fmtBytes(v.total)} / {fmtBytes(lim)} · left {fmtBytes(Math.max(0, lim - v.total))}</div></div>;
 }
 
+const SCENE = (() => { // procedural night-city scene (original artwork, no external image)
+  const r = rng(5), stars = Array.from({ length: 150 }, () => [r() * 1600, r() * 520, r() * 1.4 + .3, r() * 3]);
+  const layer = (n, minH, maxH, y0, seed) => { const q = rng(seed), out = []; let x = -20; while (x < 1620) { const w = 40 + q() * 70, h = minH + q() * (maxH - minH); out.push({ x, w, h, y: y0 - h, win: Array.from({ length: Math.floor(w * h / 520) }, () => [x + 6 + q() * (w - 12), y0 - h + 8 + q() * (h - 16), q()]) }); x += w + q() * 6; } return out; };
+  return { stars, far: layer(0, 90, 240, 760, 21), near: layer(0, 140, 360, 900, 33) };
+})();
+function rng(seed) { return () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const LoginScene = () => <svg className="lg-scene" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+  <defs><linearGradient id="lgsky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#040a26" /><stop offset=".45" stopColor="#10306b" /><stop offset=".78" stopColor="#3c4f8f" /><stop offset="1" stopColor="#8a5a8c" /></linearGradient>
+    <radialGradient id="lgglow" cx=".5" cy="1" r=".6"><stop offset="0" stopColor="#ff9d6e" stopOpacity=".55" /><stop offset="1" stopColor="#ff9d6e" stopOpacity="0" /></radialGradient>
+    <linearGradient id="lgm" x1="0" x2="1"><stop offset="0" stopColor="#bfe6ff" stopOpacity="0" /><stop offset="1" stopColor="#e9f7ff" /></linearGradient></defs>
+  <rect width="1600" height="900" fill="url(#lgsky)" /><rect width="1600" height="900" fill="url(#lgglow)" />
+  {SCENE.stars.map((s, i) => <circle key={i} className="lg-star" cx={s[0]} cy={s[1]} r={s[2]} fill="#fff" style={{ animationDelay: `${s[3]}s` }} />)}
+  {[[240, 70, 0], [900, 40, 2.2], [1250, 120, 4.1], [560, 150, 6.3], [1450, 30, 8.4]].map(([x, y, d], i) => <line key={i} className="lg-meteor" x1={x} y1={y} x2={x + 190} y2={y + 105} stroke="url(#lgm)" strokeWidth="2.2" strokeLinecap="round" style={{ animationDelay: `${d}s` }} />)}
+  <g fill="#18274f" opacity=".95">{SCENE.far.map((b, i) => <rect key={i} x={b.x} y={b.y} width={b.w} height={b.h + 140} />)}</g>
+  <g>{SCENE.far.flatMap(b => b.win).map((w, i) => <rect key={i} x={w[0]} y={w[1]} width="3" height="4" fill={w[2] > .5 ? '#ffd98a' : '#8fd3ff'} opacity={w[2] > .8 ? .95 : .45} />)}</g>
+  <g fill="#0a1230">{SCENE.near.map((b, i) => <rect key={i} x={b.x} y={b.y} width={b.w} height={b.h + 10} />)}</g>
+  <g>{SCENE.near.flatMap(b => b.win).map((w, i) => <rect key={i} x={w[0]} y={w[1]} width="3.5" height="5" fill={w[2] > .55 ? '#ffe3a0' : '#5fc8ff'} opacity={w[2] > .85 ? 1 : .55} />)}</g>
+</svg>;
+const Field = ({ icon, ...p }) => <label className="lg-field"><input {...p} /><span className="lg-ico"><Icon n={icon} s={16} /></span></label>;
+
 function Login({ done }) {
-  const [u, setU] = useState(''), [p, setP] = useState(''), [e, setE] = useState(''), [wake, setWake] = useState('Checking server…');
+  const saved = (() => { try { return localStorage.getItem('rememberUser') || ''; } catch { return ''; } })();
+  const [u, setU] = useState(saved), [p, setP] = useState(''), [e, setE] = useState(''), [wake, setWake] = useState('Checking server…'), [rem, setRem] = useState(!!saved);
+  const [busy, setBusy] = useState(false), [ok, setOk] = useState(false), [shake, setShake] = useState(false), [forgot, setForgot] = useState(false);
   useEffect(() => { let on = true; (async () => { for (let i = 0; i < 8 && on; i++) { try { const r = await fetch('/health'); if (r.ok) return on && setWake(''); } catch { /* retry */ } on && setWake('Server is waking up, please wait…'); await new Promise(r => setTimeout(r, 4000)); } on && setWake('Server not reachable - check your connection and reload.'); })(); return () => { on = false; }; }, []);
-  const go = async () => { try { const r = await api('/auth/login', { method: 'POST', body: { username: u, password: p } }); sessionStorage.setItem('jwt', r.token); sessionStorage.setItem('role', r.role); done(); } catch (x) { setE(x.message); } };
-  const inp = 'bg-[color:var(--input)] border border-[color:var(--border)] rounded w-full p-2 text-sm';
-  return <div className="min-h-screen grid place-items-center"><div className="bg-[color:var(--panel)] border border-[color:var(--border)] p-6 rounded w-80 space-y-3"><h1 className="font-semibold text-lg">Hotspot Monitoring</h1>
-    <input className={inp} placeholder="Username" value={u} onChange={x => setU(x.target.value)} /><input className={inp} type="password" placeholder="Password" value={p} onChange={x => setP(x.target.value)} onKeyDown={x => x.key === 'Enter' && go()} />
-    {wake && <div className="text-[color:var(--muted)] text-xs">{wake}</div>}{e && <div className="text-[color:var(--red)] text-sm">{e}</div>}<button className="bg-[color:var(--primary)] hover:bg-[color:var(--primaryh)] text-white w-full p-2 rounded text-sm font-medium" onClick={go}>Sign in</button></div></div>;
+  const fail = m => { setE(m); setShake(true); setTimeout(() => setShake(false), 500); };
+  const go = async ev => { ev?.preventDefault(); if (busy || ok) return;
+    if (!u.trim() || !p) return fail('Enter your username and password.');
+    setE(''); setBusy(true);
+    try { const r = await api('/auth/login', { method: 'POST', body: { username: u.trim(), password: p } });
+      try { rem ? localStorage.setItem('rememberUser', u.trim()) : localStorage.removeItem('rememberUser'); } catch { /* ignore */ }
+      sessionStorage.setItem('jwt', r.token); sessionStorage.setItem('role', r.role); setBusy(false); setOk(true); setTimeout(done, 800);
+    } catch (x) { setBusy(false); fail(x.message); } };
+  return <div className="lg-page"><LoginScene />
+    <form className={`lg-card ${shake ? 'lg-shake' : ''}`} onSubmit={go} noValidate>
+      <button type="button" className="lg-x" aria-label="Clear form" title="Clear" onClick={() => { setU(''); setP(''); setE(''); setForgot(false); }}>✕</button>
+      <div className="lg-brand">EWZ Network Center</div>
+      <h1 className="lg-title">Login</h1>
+      <Field icon="user" type="text" placeholder="Username" autoComplete="username" value={u} onChange={x => setU(x.target.value)} />
+      <Field icon="lock" type="password" placeholder="Password" autoComplete="current-password" value={p} onChange={x => setP(x.target.value)} />
+      <div className="lg-row"><label className="lg-check"><input type="checkbox" checked={rem} onChange={x => setRem(x.target.checked)} />Remember me</label>
+        <button type="button" className="lg-link" onClick={() => setForgot(f => !f)}>Forgot Password?</button></div>
+      {forgot && <div className="lg-note">Ask the system administrator to reset your password (it is set on the server as ADMIN_PASSWORD).</div>}
+      {wake && <div className="lg-note">{wake}</div>}
+      {e && <div className="lg-err" role="alert">{e}</div>}
+      <button type="submit" className={`lg-btn ${busy ? 'is-busy' : ''} ${ok ? 'is-ok' : ''}`} disabled={busy || ok}>
+        {ok ? <><Icon n="check" s={16} /> Welcome</> : busy ? <><span className="lg-spin" /> Signing in…</> : 'Login'}</button>
+    </form></div>;
 }
 
 const PAGES = ['Network Overview', 'Dashboard', 'Vouchers', 'Active Users', 'Devices', 'Data Usage', 'Security Alerts', 'Blocked Devices', 'Reports', 'Audit Logs', 'Settings'];
@@ -106,7 +146,7 @@ const ICONS = { wifi: 'M5 12.55a11 11 0 0 1 14 0M1.42 9a16 16 0 0 1 21.16 0M8.53
   ban: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM4.93 4.93l14.14 14.14', report: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8',
   log: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01', gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
   user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8', logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
-  network: 'M12 2v6M12 8l-7 6M12 8l7 6M5 14v4M19 14v4M12 8v10M3 18h4v4H3zM17 18h4v4h-4zM10 18h4v4h-4z', collapse: 'M11 17l-5-5 5-5M18 17l-5-5 5-5', expand: 'M13 17l5-5-5-5M6 17l5-5-5-5', router: 'M4 14h16a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2zM6 18h.01M10 18h.01M8 14l-2-6M16 14l2-6', clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2', refresh: 'M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15' };
+  network: 'M12 2v6M12 8l-7 6M12 8l7 6M5 14v4M19 14v4M12 8v10M3 18h4v4H3zM17 18h4v4h-4zM10 18h4v4h-4z', lock: 'M5 11h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1zM8 11V7a4 4 0 0 1 8 0v4', check: 'M20 6 9 17l-5-5', collapse: 'M11 17l-5-5 5-5M18 17l-5-5 5-5', expand: 'M13 17l5-5-5-5M6 17l5-5-5-5', router: 'M4 14h16a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2zM6 18h.01M10 18h.01M8 14l-2-6M16 14l2-6', clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2', refresh: 'M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15' };
 const Icon = ({ n, s = 18 }) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={ICONS[n]} /></svg>;
 const NAV = [{ g: 'Monitor', items: [['Network Overview', 'network'], ['Dashboard', 'grid'], ['Active Users', 'users', 'activeUsers'], ['Devices', 'device']] },
   { g: 'Vouchers', items: [['Vouchers', 'ticket', 'total'], ['Data Usage', 'chart']] },
@@ -120,9 +160,10 @@ export default function App() {
   useEffect(() => { if (theme !== 'auto' && theme !== 'schedule') return; const m = matchMedia('(prefers-color-scheme: light)');
     const h = () => { applyTheme(theme, accent || null); bump(n => n + 1); }; m.addEventListener('change', h); const i = setInterval(h, 60000);
     return () => { m.removeEventListener('change', h); clearInterval(i); }; }, [theme, accent]);
-  const [authed, setAuthed] = useState(!!getToken()), [page, setPage] = useState('Network Overview'), [live, setLive] = useState(null), [nav, setNav] = useState(false), [rail, setRail] = useState(() => { try { return localStorage.getItem('rail') === '1'; } catch { return false; } });
+  const [authed, setAuthed] = useState(!!getToken()), [page, setPage] = useState('Network Overview'), [live, setLive] = useState(null), [nav, setNav] = useState(false), [railS, setRail] = useState(() => { try { return localStorage.getItem('rail') === '1'; } catch { return false; } });
   const toggleRail = () => setRail(r => { try { localStorage.setItem('rail', r ? '0' : '1'); } catch { /* ignore */ } return !r; });
-  const toggleNav = () => (matchMedia('(min-width:768px)').matches ? toggleRail() : setNav(o => !o));
+  const full = page === 'Network Overview', rail = railS && !full; // overview is full-page: sidebar is a hidden drawer there
+  const toggleNav = () => (page !== 'Network Overview' && matchMedia('(min-width:768px)').matches ? toggleRail() : setNav(o => !o));
   const [msg, setMsg] = useState(''), [conn, setConn] = useState(false), [hist, setHist] = useState([]), [toasts, setToasts] = useState([]), [ago, setAgo] = useState(0), lastRx = useRef(Date.now());
   useEffect(() => { if (!authed) return; const s = io({ auth: { token: getToken() } });
     s.on('connect', () => setConn(true)); s.on('disconnect', () => setConn(false));
@@ -135,7 +176,7 @@ export default function App() {
   useEffect(() => { const i = setInterval(() => setAgo(Math.round((Date.now() - lastRx.current) / 1000)), 1000); return () => clearInterval(i); }, []);
   if (!authed) return <Login done={() => setAuthed(true)} />;
 
-  const sys = live?.system || {}, online = live?.router?.online, cap = live?.capBytes, vs = live?.vouchers || [], ss = live?.sessions || [], sm = live?.summary, rt = live?.router || {};
+  const sys = live?.system || {}, online = live?.router?.online, cap = live?.capBytes, vs = live?.vouchers || [], ss = live?.sessions || [], sm = live?.summary || {}, rt = live?.router || {};
   const act = async (path, label, opts = { method: 'POST', body: {} }) => { if (!confirm(`${label}?`)) return;
     try { await api(path, opts); setMsg(`✔ ${label}: confirmed by router`); } catch (e) { setMsg(`✖ ${label} failed: ${e.message}`); } };
   const vAct = (n, a, label) => act(`/vouchers/${encodeURIComponent(n)}/${a}`, `${label} ${n}`);
@@ -154,8 +195,8 @@ export default function App() {
       <Btn kind="block" onClick={() => act('/blocked-devices', `Block device ${r.mac}`, { method: 'POST', body: { mac: r.mac, reason: 'Blocked from dashboard' } })}>Block</Btn></div> }];
 
   return <div className="min-h-screen md:flex text-[color:var(--text)]">
-    {nav && <div className="fixed inset-0 z-40 bg-black/60 md:hidden" onClick={() => setNav(false)} />}
-    <aside className={`fixed md:sticky z-50 top-0 left-0 h-screen w-64 ${rail ? 'md:w-[76px]' : 'md:w-64'} shrink-0 flex flex-col bg-[color:var(--input)] border-r border-[color:var(--border)] transition-[transform,width] duration-200 overflow-hidden ${nav ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
+    {nav && <div className={`fixed inset-0 z-40 bg-black/60 ${full ? '' : 'md:hidden'}`} onClick={() => setNav(false)} />}
+    <aside className={`fixed ${full ? '' : 'md:sticky'} z-50 top-0 left-0 h-screen w-64 ${rail && !full ? 'md:w-[76px]' : 'md:w-64'} shrink-0 flex flex-col bg-[color:var(--input)] border-r border-[color:var(--border)] transition-[transform,width] duration-200 overflow-hidden ${nav ? 'translate-x-0' : '-translate-x-full'} ${full ? '' : 'md:translate-x-0'}`}>
       <div className={`flex items-center gap-3 px-4 h-16 border-b border-[color:var(--border)] ${rail ? 'md:justify-center md:px-0' : ''}`}>
         <span className="grid place-items-center w-9 h-9 rounded-lg text-[color:var(--input)]" style={{ background: 'var(--accent)' }}><Icon n="wifi" s={20} /></span>
         <div className={`leading-tight ${rail ? 'md:hidden' : ''}`}><div className="text-[15px] font-extrabold text-[color:var(--strong)] tracking-tight">Hotspot Monitor</div><div className="text-[11px] font-semibold text-[color:var(--muted)] uppercase tracking-wider">MikroTik Voucher Console</div></div></div>
@@ -179,8 +220,8 @@ export default function App() {
           style={{ color: 'var(--red)', background: 'color-mix(in srgb, var(--red) 14%, transparent)', border: '1px solid color-mix(in srgb, var(--red) 45%, transparent)' }}><Icon n="logout" s={16} /><span className={rail ? 'md:hidden' : ''}>Sign out</span></button></div>
     </aside>
 
-    <main className="flex-1 min-w-0 p-3 space-y-3">
-      <header className="sticky top-0 z-30 -mx-3 -mt-3 px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2 bg-[color:var(--panel)] border-b border-[color:var(--border)] shadow-sm">
+    <main className={`flex-1 min-w-0 ${full ? 'p-0' : 'p-3 space-y-3'}`}>
+      <header className={`${full ? 'hidden' : ''} sticky top-0 z-30 -mx-3 -mt-3 px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2 bg-[color:var(--panel)] border-b border-[color:var(--border)] shadow-sm`}>
         <button onClick={toggleNav} aria-label="Toggle menu" title="Toggle sidebar" className="p-2 rounded-lg border border-[color:var(--border2)] text-[color:var(--strong)]"><Icon n="menu" /></button>
         <div className="min-w-0"><div className="text-[11px] font-bold uppercase tracking-widest text-[color:var(--muted)] truncate">Mikrotik Monitoring › {page === 'Dashboard' ? 'Overview' : page}</div>
           <h1 className="text-xl font-extrabold text-[color:var(--strong)] leading-tight truncate">{page === 'Dashboard' ? 'System Overview' : page}</h1></div>
@@ -196,15 +237,15 @@ export default function App() {
       </header>
       {toasts.map(t => <div key={t.id} className="bg-[color:var(--dangerbg)] border border-[color:var(--red)] rounded p-3 text-sm">🚫 <b>{t.username}</b> reached the data cap ({fmtBytes(t.total)}). Actions on router: {t.steps.join(' → ')}.</div>)}
       {msg && <div className="bg-[color:var(--panel)] border-l-4 border-[color:var(--blue)] p-2 text-sm cursor-pointer" onClick={() => setMsg('')}>{msg}</div>}
-      {!online && <div className="bg-[color:var(--dangerbg)] border border-[color:var(--red)] text-[color:var(--redtext)] p-3 rounded text-sm">MIKROTIK OFFLINE{rt.error ? `: ${rt.error}` : ''}. No voucher or usage data is shown until the router responds.</div>}
+      {!online && !full && <div className="bg-[color:var(--dangerbg)] border border-[color:var(--red)] text-[color:var(--redtext)] p-3 rounded text-sm">MIKROTIK OFFLINE{rt.error ? `: ${rt.error}` : ''}. No voucher or usage data is shown until the router responds.</div>}
 
-      {page === 'Network Overview' && <NetworkOverview live={live} hist={hist} online={online} conn={conn} />}
-      {page === 'Dashboard' && online && sm && <>
+      {page === 'Network Overview' && <NetworkOverview live={live} hist={hist} online={online} conn={conn} onMenu={() => setNav(true)} />}
+      {page === 'Dashboard' && <>
         <Row title="System"><div className="g24">
           <div className="c3 r2 flex flex-col gap-2"><StatC title="Identity" value={rt.identity} /><Panel title="Temperature" className="flex-1"><Temp v={sys.temperature} /></Panel>
             <StatC title="Voltage" value={sys.voltage != null ? `${sys.voltage} V` : 'N/A'} color={sys.voltage != null ? G : 'var(--muted)'} /></div>
           <div className="c3 r2 flex flex-col gap-2"><StatC title="Routerboard HW" value={rt.board} color="var(--strong)" small /><StatC title="CPU" value={rt.cpuFreq ? `${rt.cpuFreq} MHz` : 'N/A'} color={G} sub={rt.cpuModel} />
-            <StatC title="System version" value={`Current: ${rt.version}`} color={G} small /><StatC title="System uptime" value={rt.uptime} color={Y} small /><StatC title="IP Address" value={sys.ipAddress} color="var(--strong)" small /></div>
+            <StatC title="System version" value={`Current: ${rt.version || '—'}`} color={G} small /><StatC title="System uptime" value={rt.uptime || '—'} color={Y} small /><StatC title="IP Address" value={sys.ipAddress} color="var(--strong)" small /></div>
           <div className="c5"><Panel title="Installed Packages"><Table compact cols={[{ h: 'name', k: 'name' }, { h: 'enabled', r: r => <span style={{ color: r.enabled ? G : R }}>{r.enabled ? 'Yes' : 'No'}</span> }, { h: 'build_time', k: 'buildTime' }]} rows={sys.packages || []} empty="No package data" /></Panel></div>
           <div className="c4"><Panel title=" "><div className="space-y-4"><Gauge label="Used RAM Memory" v={rt.memPercent || 0} /><Gauge label="CPU Load" v={rt.cpuLoad || 0} /><Gauge label="HDD Utilization" v={rt.hddPercent || 0} /></div></Panel></div>
           <div className="c5"><TS stats title="CPU load" labels={lab} sets={[{ label: rt.cpuModel || 'CPU', data: hist.map(h => h.cpu), borderColor: G }]} fmt={v => v + '%'} /></div>
@@ -231,10 +272,10 @@ export default function App() {
             <Table compact cols={[{ h: 'Voucher', k: 'username' }, { h: 'Host name', k: 'host', r: r => r.host || <span className="text-[color:var(--muted)]">Unknown</span> }, { h: 'Device', k: 'mac' }, { h: 'Status', r: r => <Badge s={r.status} /> }, { h: 'Usage', k: 'total', r: r => <Usage v={r} cap={cap} /> }]} rows={top} /></Panel>
         </Row></>}
 
-      {online && page === 'Vouchers' && <Panel><Table cols={voucherCols} rows={vs} /></Panel>}
-      {online && page === 'Data Usage' && <Panel><Table rows={vs} cols={[{ h: 'Voucher', k: 'username' }, { h: 'Host name', k: 'host', r: r => r.host || <span className="text-[color:var(--muted)]">Unknown</span> }, { h: 'Device', k: 'mac' }, { h: 'Upload', k: 'upload', r: r => fmtBytes(r.upload) }, { h: 'Download', k: 'download', r: r => fmtBytes(r.download) },
+      {page === 'Vouchers' && <Panel><Table cols={voucherCols} rows={vs} /></Panel>}
+      {page === 'Data Usage' && <Panel><Table rows={vs} cols={[{ h: 'Voucher', k: 'username' }, { h: 'Host name', k: 'host', r: r => r.host || <span className="text-[color:var(--muted)]">Unknown</span> }, { h: 'Device', k: 'mac' }, { h: 'Upload', k: 'upload', r: r => fmtBytes(r.upload) }, { h: 'Download', k: 'download', r: r => fmtBytes(r.download) },
         { h: 'Total', k: 'total', r: r => fmtBytes(r.total) }, { h: 'Limit', r: r => isFinite(effLimit(r, cap)) ? fmtBytes(effLimit(r, cap)) : '—' }, { h: 'Remaining', r: r => isFinite(effLimit(r, cap)) ? fmtBytes(Math.max(0, effLimit(r, cap) - r.total)) : '—' }, { h: 'Status', k: 'status', r: r => <Badge s={r.status} /> }]} /></Panel>}
-      {online && (page === 'Active Users' || page === 'Sessions') && <Panel><Table rows={ss} cols={sessCols} /></Panel>}
+      {(page === 'Active Users' || page === 'Sessions') && <Panel><Table rows={ss} cols={sessCols} /></Panel>}
       {page === 'Devices' && <Async path="/devices" cols={[{ h: 'Host name', k: 'host_name', r: r => r.host_name || <span className="text-[color:var(--muted)]">Unknown</span> }, { h: 'MAC', k: 'mac_address' }, { h: 'IP', k: 'last_ip' }, { h: 'Voucher', k: 'last_voucher' }, { h: 'First seen', r: r => new Date(r.first_seen).toLocaleString() }, { h: 'Last seen', r: r => new Date(r.last_seen).toLocaleString() },
         { h: 'Upload', r: r => fmtBytes(r.upload) }, { h: 'Download', r: r => fmtBytes(r.download) }, { h: 'Sessions', k: 'sessions' }, { h: 'Status', r: r => <Badge s={r.blocked ? 'BLOCKED' : r.online ? 'ONLINE' : 'OFFLINE'} /> }, { h: 'Risk', r: r => <Badge s={r.risk_level} /> }]} />}
       {page === 'Security Alerts' && <Async path="/alerts" cols={[{ h: 'Time', r: r => new Date(r.ts).toLocaleString() }, { h: 'Voucher', k: 'username' }, { h: 'MAC', k: 'mac_address' }, { h: 'Severity', r: r => <Badge s={r.severity} /> },
