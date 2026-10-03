@@ -11,6 +11,7 @@
     "start": "npm run migrate && npm run seed && node backend/src/server.js",
     "serve": "node backend/src/server.js",
     "migrate": "node backend/src/database/migrate.js",
+    "connector": "node backend/src/connector/agent.js",
     "seed": "node backend/src/database/seeds/seed.js",
     "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "node --watch backend/src/server.js",
