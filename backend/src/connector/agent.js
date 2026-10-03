@@ -6,7 +6,8 @@ import { config } from '../config/index.js';
 
 import {
   live,
-  syncOnce
+  syncOnce,
+  startPoller
 } from '../jobs/poller.js';
 
 import * as hs from '../services/mikrotik/hotspotService.js';
@@ -71,6 +72,9 @@ console.log(
 );
 console.log('');
 
+/*
+ * Connect to the Render connector namespace.
+ */
 const connector = io(
   `${RENDER_URL}/connector`,
   {
@@ -93,16 +97,17 @@ const connector = io(
     reconnectionDelayMax:
       15000,
 
-    timeout: 15000
+    timeout:
+      15000
   }
 );
 
 /*
- * The existing poller expects an object
- * with an emit() function.
+ * The poller expects an object with
+ * an emit() function.
  *
- * Every poll produces a complete live
- * snapshot and sends it to Render.
+ * Every successful sync sends the
+ * complete live snapshot to Render.
  */
 const fakeIO = {
 
@@ -118,9 +123,32 @@ const fakeIO = {
         data
       );
     }
+
+    /*
+     * Forward cap events to Render.
+     */
+    if (
+      event === 'cap-event' &&
+      connector.connected
+    ) {
+
+      connector.emit(
+        'cap-event',
+        data
+      );
+    }
   }
 
 };
+
+/*
+ * Keep a reference to the local poller.
+ *
+ * This prevents multiple polling
+ * intervals from being created if
+ * Socket.IO reconnects.
+ */
+let connectorPoller = null;
 
 /*
  * Commands received from Render.
@@ -290,6 +318,9 @@ connector.on(
 
     console.log('');
 
+    /*
+     * Perform an immediate synchronization.
+     */
     try {
 
       await syncOnce(
@@ -307,6 +338,28 @@ connector.on(
         error.message
       );
     }
+
+    /*
+     * Start continuous MikroTik polling.
+     *
+     * This is the important fix.
+     *
+     * The connector now synchronizes
+     * with MikroTik every config.pollInterval
+     * seconds.
+     */
+    if (!connectorPoller) {
+
+      connectorPoller =
+        startPoller(
+          fakeIO
+        );
+
+      console.log(
+        `Continuous MikroTik polling started every ${config.pollInterval}s.`
+      );
+    }
+
   }
 );
 
@@ -320,6 +373,7 @@ connector.on(
     console.log(
       `Disconnected from Render: ${reason}`
     );
+
   }
 );
 
@@ -333,6 +387,7 @@ connector.on(
     console.error(
       `Render connector error: ${error.message}`
     );
+
   }
 );
 
@@ -357,6 +412,7 @@ connector.on(
       !requestId ||
       !command
     ) {
+
       return;
     }
 
@@ -388,13 +444,16 @@ connector.on(
           'Post-command sync failed:',
           syncError.message
         );
+
       }
 
       connector.emit(
         'commandResult',
         {
           requestId,
+
           ok: true,
+
           result:
             result ?? {}
         }
@@ -411,12 +470,16 @@ connector.on(
         'commandResult',
         {
           requestId,
+
           ok: false,
+
           error:
             error.message
         }
       );
+
     }
+
   }
 );
 
@@ -428,6 +491,19 @@ function shutdown() {
   console.log(
     'Stopping MikroTik connector...'
   );
+
+  /*
+   * Stop local polling.
+   */
+  if (connectorPoller) {
+
+    clearInterval(
+      connectorPoller
+    );
+
+    connectorPoller =
+      null;
+  }
 
   connector.disconnect();
 
