@@ -39,11 +39,8 @@ const Btn = ({ children, onClick, danger, kind, disabled }) => { const c = `var(
 const Panel = ({ title, right, children, className = '' }) => <section className={`bg-[color:var(--panel)] border border-[color:var(--border)] rounded ${className}`}>
   {title && <header className="flex items-center justify-between px-3 py-2 text-[13px] font-bold text-[color:var(--strong)]"><span>{title}</span>{right}</header>}<div className="px-3 pb-3">{children}</div></section>;
 const Stat = ({ title, value, color = G, sub }) => <Panel title={title}><div className="text-3xl font-semibold leading-tight truncate text-center py-1" style={{ color }}>{value ?? '—'}</div>{sub && <div className="text-xs text-[color:var(--muted)] mt-1 text-center">{sub}</div>}</Panel>;
-const Row = ({ title, children, open = true }) => { const [o, setO] = useState(open);
-  return <div><button className="flex items-center gap-2 text-[16px] font-bold py-2" onClick={() => setO(!o)}><span className="text-[color:var(--muted)]">{o ? '⌄' : '›'}</span>{title}</button>{o && <div className="space-y-3">{children}</div>}</div>; };
 const Led = ({ v, n = 24 }) => { const on = Math.round(Math.min(100, v) / 100 * n);
   return <div className="flex gap-[2px] h-5">{Array.from({ length: n }, (_, i) => <div key={i} className="flex-1 rounded-[1px]" style={{ background: i < on ? (i / n < .6 ? G : i / n < .85 ? Y : R) : 'var(--track)' }} />)}</div>; };
-const Gauge = ({ label, v }) => <div><div className="flex justify-between items-end"><span className="text-lg font-bold text-white">{label}</span><span className="text-2xl" style={{ color: tone(v) }}>{v.toFixed(1)}<span className="text-base">%</span></span></div><Led v={v} /></div>;
 
 function TS({ title, labels, sets, fmt = v => v, stats }) {
   const st = d => { d = d.filter(x => x != null); return d.length ? { mean: d.reduce((x, y) => x + y, 0) / d.length, max: Math.max(...d), min: Math.min(...d) } : null; };
@@ -56,25 +53,18 @@ function TS({ title, labels, sets, fmt = v => v, stats }) {
         {x ? [x.mean, x.max, x.min].map((v, i) => <td key={i}>{fmt(Math.round(v * 10) / 10)}</td>) : <td colSpan={3}>—</td>}</tr>; })}</tbody></table>
       : sets.length > 1 && <div className="flex gap-4 text-xs mt-2 text-[color:var(--muted)]">{sets.map(s => <span key={s.label}><span className="inline-block w-3 h-[3px] mr-1 align-middle" style={{ background: s.borderColor }} />{s.label}</span>)}</div>}</Panel>;
 }
-const StatC = ({ title, value, color = G, sub, small }) => <Panel title={title} className="flex-1"><div className="text-center py-2"><div className={`${small ? 'text-xl' : 'text-2xl'} font-semibold truncate`} style={{ color }}>{value ?? 'N/A'}</div>{sub && <div className="text-xs text-[color:var(--muted)] mt-1">{sub}</div>}</div></Panel>;
-function Temp({ v }) {
-  if (v == null) return <div className="text-center text-[color:var(--muted)] py-6">N/A<div className="text-xs">no sensor</div></div>;
-  const p = Math.min(1, Math.max(0, v / 100)), c = v < 50 ? G : v < 70 ? Y : R, pt = a => [60 - 45 * Math.cos(a * Math.PI), 62 - 45 * Math.sin(a * Math.PI)];
-  const [x, y] = pt(p);
-  return <svg viewBox="0 0 120 80" className="w-full max-h-32"><path d="M15 62 A45 45 0 0 1 105 62" stroke="var(--track)" strokeWidth="9" fill="none" /><path d={`M15 62 A45 45 0 0 1 ${x} ${y}`} stroke={c} strokeWidth="9" fill="none" />
-    <text x="60" y="62" textAnchor="middle" fill={c} fontSize="17" fontWeight="500">{v} °C</text></svg>;
-}
 
-function Table({ cols, rows, empty = 'No data', compact, search }) {
+function Table({ cols, rows, empty = 'No data', compact, search, freeze = 0 }) {
+  const FW = [130, 170], fz = (i, th) => i < freeze ? { position: 'sticky', left: FW.slice(0, i).reduce((a, b) => a + b, 0), width: FW[i], minWidth: FW[i], maxWidth: FW[i] } : undefined;
   const [q, setQ] = useState(''), [sort, setSort] = useState(null);
   const f = useMemo(() => { let r = rows.filter(x => !q || JSON.stringify(x).toLowerCase().includes(q.toLowerCase()));
     if (sort) r = [...r].sort((a, b) => (a[sort.k] > b[sort.k] ? 1 : a[sort.k] < b[sort.k] ? -1 : 0) * sort.d); return r; }, [rows, q, sort]);
   return <div>{(!compact || search) && <input className="bg-[color:var(--input)] border border-[color:var(--border)] rounded px-2 py-1 mb-2 w-full sm:w-72 text-sm" placeholder="Search…" value={q} onChange={e => setQ(e.target.value)} />}
-    <div className={`overflow-auto rounded border border-[color:var(--border)] ${compact ? 'max-h-72' : 'max-h-[65vh]'}`}>
-      <table className="w-full text-[13px] border-separate border-spacing-0"><thead><tr>{cols.map(c => <th key={c.h} onClick={() => c.k && setSort({ k: c.k, d: sort?.k === c.k ? -sort.d : 1 })}
-        className={`sticky top-0 z-10 text-left px-3 py-2 font-bold text-[11px] uppercase tracking-wide whitespace-nowrap bg-[color:var(--hover)] text-[color:var(--strong)] border-b border-[color:var(--border2)] ${c.k ? 'cursor-pointer select-none' : ''}`}>
+    <div className={`overflow-auto rounded border border-[color:var(--border)] ${compact ? 'max-h-72' : 'max-h-[calc(100vh-220px)] min-h-[260px]'}`}>
+      <table className="w-full text-[13px] border-separate border-spacing-0"><thead><tr>{cols.map((c, i) => <th key={c.h} onClick={() => c.k && setSort({ k: c.k, d: sort?.k === c.k ? -sort.d : 1 })}
+        style={fz(i)} className={`sticky top-0 ${i < freeze ? 'z-30' : 'z-20'} ${i === freeze - 1 ? 'border-r border-r-[color:var(--border2)]' : ''} text-left px-3 py-2 font-bold text-[11px] uppercase tracking-wide whitespace-nowrap bg-[color:var(--hover)] text-[color:var(--strong)] border-b border-[color:var(--border2)] ${c.k ? 'cursor-pointer select-none' : ''}`}>
         {c.h}{c.k && sort?.k === c.k ? (sort.d > 0 ? ' ↑' : ' ↓') : ''}</th>)}</tr></thead>
-      <tbody>{f.map((r, i) => <tr key={i} className="even:bg-[color-mix(in_srgb,var(--hover)_40%,transparent)] hover:bg-[color:var(--hover)]">{cols.map(c => <td key={c.h} className="px-3 py-2 whitespace-nowrap border-b border-[color:var(--border)] align-middle">{c.r ? c.r(r) : (r[c.k] ?? '—')}</td>)}</tr>)}</tbody></table>
+      <tbody>{f.map((r, i) => <tr key={i} className="group even:bg-[color-mix(in_srgb,var(--hover)_40%,transparent)] hover:bg-[color:var(--hover)]">{cols.map((c, ci) => <td key={c.h} style={fz(ci)} className={`px-3 py-2 whitespace-nowrap border-b border-[color:var(--border)] align-middle ${ci < freeze ? `z-10 truncate bg-[color:var(--panel)] group-even:bg-[color-mix(in_srgb,var(--hover)_40%,var(--panel))] group-hover:!bg-[color:var(--hover)] ${ci === freeze - 1 ? 'border-r border-r-[color:var(--border2)]' : ''}` : ''}`}>{c.r ? c.r(r) : (r[c.k] ?? '—')}</td>)}</tr>)}</tbody></table>
       {!f.length && <div className="p-4 text-center text-[color:var(--muted)]">{empty}</div>}</div>
     <div className="mt-1 text-[11px] text-[color:var(--muted)]">{f.length} row{f.length === 1 ? '' : 's'}</div></div>;
 }
@@ -137,7 +127,7 @@ function Login({ done }) {
     </form></div>;
 }
 
-const PAGES = ['Network Overview', 'Dashboard', 'Vouchers', 'Active Users', 'Devices', 'Data Usage', 'Security Alerts', 'Blocked Devices', 'Reports', 'Audit Logs', 'Settings'];
+const PAGES = ['Network Overview', 'Dashboard', 'Vouchers', 'Active Users', 'Data Usage', 'Security Alerts', 'Blocked Devices', 'Reports', 'Audit Logs', 'Settings'];
 
 const ICONS = { wifi: 'M5 12.55a11 11 0 0 1 14 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01', menu: 'M3 6h18M3 12h18M3 18h18',
   grid: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z', ticket: 'M2 9a3 3 0 0 1 0-6h20a3 3 0 0 1 0 6v6a3 3 0 0 1 0 6H2a3 3 0 0 1 0-6zM13 5v2M13 17v2M13 11v2',
@@ -148,7 +138,7 @@ const ICONS = { wifi: 'M5 12.55a11 11 0 0 1 14 0M1.42 9a16 16 0 0 1 21.16 0M8.53
   user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8', logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
   network: 'M12 2v6M12 8l-7 6M12 8l7 6M5 14v4M19 14v4M12 8v10M3 18h4v4H3zM17 18h4v4h-4zM10 18h4v4h-4z', lock: 'M5 11h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1zM8 11V7a4 4 0 0 1 8 0v4', check: 'M20 6 9 17l-5-5', collapse: 'M11 17l-5-5 5-5M18 17l-5-5 5-5', expand: 'M13 17l5-5-5-5M6 17l5-5-5-5', router: 'M4 14h16a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2zM6 18h.01M10 18h.01M8 14l-2-6M16 14l2-6', clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2', refresh: 'M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15' };
 const Icon = ({ n, s = 18 }) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={ICONS[n]} /></svg>;
-const NAV = [{ g: 'Monitor', items: [['Network Overview', 'network'], ['Dashboard', 'grid'], ['Active Users', 'users', 'activeUsers'], ['Devices', 'device']] },
+const NAV = [{ g: 'Monitor', items: [['Network Overview', 'network'], ['Dashboard', 'grid'], ['Active Users', 'users', 'activeUsers']] },
   { g: 'Vouchers', items: [['Vouchers', 'ticket', 'total'], ['Data Usage', 'chart']] },
   { g: 'Security', items: [['Security Alerts', 'alert', 'suspicious'], ['Blocked Devices', 'ban', 'blockedDevices']] },
   { g: 'Admin', items: [['Reports', 'report'], ['Audit Logs', 'log'], ['Settings', 'gear']] }];
@@ -237,47 +227,39 @@ export default function App() {
       </header>
       {toasts.map(t => <div key={t.id} className="bg-[color:var(--dangerbg)] border border-[color:var(--red)] rounded p-3 text-sm">🚫 <b>{t.username}</b> reached the data cap ({fmtBytes(t.total)}). Actions on router: {t.steps.join(' → ')}.</div>)}
       {msg && <div className="bg-[color:var(--panel)] border-l-4 border-[color:var(--blue)] p-2 text-sm cursor-pointer" onClick={() => setMsg('')}>{msg}</div>}
-      {!online && !full && <div className="bg-[color:var(--dangerbg)] border border-[color:var(--red)] text-[color:var(--redtext)] p-3 rounded text-sm">MIKROTIK OFFLINE{rt.error ? `: ${rt.error}` : ''}. No voucher or usage data is shown until the router responds.</div>}
+      {!online && !full && <div className="bg-[color:var(--dangerbg)] border border-[color:var(--red)] text-[color:var(--redtext)] p-3 rounded text-sm">MIKROTIK OFFLINE{rt.error ? `: ${String(rt.error).replace(/\.\s*$/, '')}` : ''}. No voucher or usage data is shown until the router responds.</div>}
 
       {page === 'Network Overview' && <NetworkOverview live={live} hist={hist} online={online} conn={conn} onMenu={() => setNav(true)} />}
       {page === 'Dashboard' && <>
-        <Row title="System"><div className="g24">
-          <div className="c3 r2 flex flex-col gap-2"><StatC title="Identity" value={rt.identity} /><Panel title="Temperature" className="flex-1"><Temp v={sys.temperature} /></Panel>
-            <StatC title="Voltage" value={sys.voltage != null ? `${sys.voltage} V` : 'N/A'} color={sys.voltage != null ? G : 'var(--muted)'} /></div>
-          <div className="c3 r2 flex flex-col gap-2"><StatC title="Routerboard HW" value={rt.board} color="var(--strong)" small /><StatC title="CPU" value={rt.cpuFreq ? `${rt.cpuFreq} MHz` : 'N/A'} color={G} sub={rt.cpuModel} />
-            <StatC title="System version" value={`Current: ${rt.version || '—'}`} color={G} small /><StatC title="System uptime" value={rt.uptime || '—'} color={Y} small /><StatC title="IP Address" value={sys.ipAddress} color="var(--strong)" small /></div>
-          <div className="c5"><Panel title="Installed Packages"><Table compact cols={[{ h: 'name', k: 'name' }, { h: 'enabled', r: r => <span style={{ color: r.enabled ? G : R }}>{r.enabled ? 'Yes' : 'No'}</span> }, { h: 'build_time', k: 'buildTime' }]} rows={sys.packages || []} empty="No package data" /></Panel></div>
-          <div className="c4"><Panel title=" "><div className="space-y-4"><Gauge label="Used RAM Memory" v={rt.memPercent || 0} /><Gauge label="CPU Load" v={rt.cpuLoad || 0} /><Gauge label="HDD Utilization" v={rt.hddPercent || 0} /></div></Panel></div>
-          <div className="c5"><TS stats title="CPU load" labels={lab} sets={[{ label: rt.cpuModel || 'CPU', data: hist.map(h => h.cpu), borderColor: G }]} fmt={v => v + '%'} /></div>
-          <div className="c4"><TS stats title="CPU Frequency" labels={lab} sets={[{ label: rt.cpuModel || 'CPU', data: hist.map(h => h.freq), borderColor: G }]} fmt={v => v + ' MHz'} /></div>
-          <div className="c9"><Panel title="Active Users (router admins)"><Table compact cols={[{ h: 'name', k: 'name' }, { h: 'group', k: 'group' }, { h: 'address', k: 'address' }, { h: 'via', k: 'via' }, { h: 'when', k: 'when' }]} rows={sys.admins || []} empty="No data" /></Panel></div>
-          <div className="c9"><TS stats title="HDD Utilization" labels={lab} sets={[{ label: 'Used', data: hist.map(h => h.hddUsed), borderColor: B }, { label: 'Total', data: hist.map(h => h.hddTotal), borderColor: R }]} fmt={v => v + ' MB'} /></div>
-        </div></Row>
-        <Row title="DHCP"><div className="g24">
-          <div className="c5"><Panel title="IP Pool Usage"><div className="space-y-5 pt-1">{(sys.pools || []).map(p => <div key={p.name}><div className="text-xl font-bold text-white">{p.name}</div>
-            <div className="flex items-center gap-3"><div className="flex-1"><Led v={p.percent} /></div><span className="text-5xl font-light" style={{ color: tone(p.percent) }}>{p.used}</span></div></div>)}
-            {!(sys.pools || []).length && <div className="text-sm text-[color:var(--muted)]">No IP pools</div>}</div></Panel></div>
-          <div className="c19"><Panel title="DHCP Leases"><Table compact search cols={[{ h: 'Host Name', k: 'host' }, { h: 'Comment', k: 'comment' }, { h: 'DHCP Server', k: 'server' }, { h: 'mac_address', k: 'mac' }, { h: 'address', k: 'address' }, { h: 'active_address', k: 'active' }]} rows={sys.leases || []} empty="No DHCP leases (hotspot may use its own address pool)" /></Panel></div>
-        </div></Row>
-        <Row title="Hotspot">
-          <div className="grid grid-cols-2 lg:grid-cols-6 gap-3"><Stat title="Active users" value={sm.activeUsers} /><Stat title="Active devices" value={sm.activeDevices} color={B} /><Stat title="Total vouchers" value={sm.total} color="var(--strong)" />
-            <Stat title="Expired" value={sm.expired} color={O} /><Stat title="Disabled / blocked" value={sm.disabled} color={R} /><Stat title="Suspicious" value={sm.suspicious} color={sm.suspicious ? R : G} /></div>
-          <div className="grid lg:grid-cols-3 gap-3"><TS title="Live throughput" labels={lab} sets={[{ label: 'Download', data: hist.map(h => h.down), borderColor: G }, { label: 'Upload', data: hist.map(h => h.up), borderColor: B }]} fmt={fmtRate} />
-            <TS title="Concurrent users" labels={lab} sets={[{ label: 'Users', data: hist.map(h => h.users), borderColor: O }]} />
-            <div className="grid grid-cols-2 gap-3"><Stat title="Total data" value={fmtBytes(sm.totalData)} color="var(--strong)" /><Stat title="Blocked devices" value={sm.blockedDevices} color={R} /><Stat title="Download" value={fmtBytes(sm.download)} /><Stat title="Upload" value={fmtBytes(sm.upload)} color={B} /></div></div>
-          <Panel title="Active sessions (live)" right={<span className="text-xs text-[color:var(--muted)]">{ss.length} online</span>}><Table cols={sessCols} rows={ss} compact empty="No active sessions" /></Panel>
-        </Row>
-        <Row title={`Data usage · auto-cap ${cap ? fmtBytes(cap) : 'off'}`}>
-          <Panel title="Top consumers" right={cap ? <span className="text-xs text-[color:var(--accent)]">at {fmtBytes(cap)}: disconnect → block → remove</span> : null}>
-            <Table compact cols={[{ h: 'Voucher', k: 'username' }, { h: 'Host name', k: 'host', r: r => r.host || <span className="text-[color:var(--muted)]">Unknown</span> }, { h: 'Device', k: 'mac' }, { h: 'Status', r: r => <Badge s={r.status} /> }, { h: 'Usage', k: 'total', r: r => <Usage v={r} cap={cap} /> }]} rows={top} /></Panel>
-        </Row></>}
+        <Panel title="Router" right={<span className="text-xs font-bold" style={{ color: online ? G : R }}>{online ? '● Online' : '● Offline'}</span>}>
+          <div className="grid lg:grid-cols-[1.25fr_1fr] gap-x-8 gap-y-4 pt-1">
+            <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 content-start">
+              {[['Identity', rt.identity], ['Board', rt.board], ['RouterOS', rt.version], ['Uptime', rt.uptime], ['IP address', sys.ipAddress], ['CPU', rt.cpuFreq ? `${rt.cpuFreq} MHz` : null]].map(([k, v]) => <div key={k} className="min-w-0">
+                <dt className="text-[11px] font-bold uppercase tracking-wider text-[color:var(--muted)]">{k}</dt><dd className="text-base font-bold text-[color:var(--strong)] truncate">{v || '—'}</dd></div>)}</dl>
+            <div className="space-y-3">{[['CPU load', rt.cpuLoad], ['Memory', rt.memPercent], ['Storage', rt.hddPercent]].map(([l, v]) => <div key={l}>
+              <div className="flex justify-between items-end text-sm"><span className="font-bold text-[color:var(--strong)]">{l}</span><span className="font-bold tabular-nums" style={{ color: tone(v || 0) }}>{(v || 0).toFixed(0)}%</span></div><Led v={v || 0} /></div>)}</div></div></Panel>
 
-      {page === 'Vouchers' && <Panel><Table cols={voucherCols} rows={vs} /></Panel>}
+        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3">
+          <Stat title="Online users" value={sm.activeUsers} /><Stat title="Devices" value={sm.activeDevices} color={B} /><Stat title="Vouchers" value={sm.total} color="var(--strong)" />
+          <Stat title="Expired" value={sm.expired} color={O} /><Stat title="Blocked" value={sm.disabled} color={R} /><Stat title="Suspicious" value={sm.suspicious} color={sm.suspicious ? R : G} /><Stat title="Total data" value={fmtBytes(sm.totalData)} color="var(--strong)" /></div>
+
+        <div className="grid lg:grid-cols-3 gap-3">
+          <TS title="Throughput" labels={lab} sets={[{ label: 'Download', data: hist.map(h => h.down), borderColor: G }, { label: 'Upload', data: hist.map(h => h.up), borderColor: B }]} fmt={fmtRate} />
+          <TS title="Concurrent users" labels={lab} sets={[{ label: 'Users', data: hist.map(h => h.users), borderColor: O }]} />
+          <TS title="CPU load" labels={lab} sets={[{ label: 'CPU', data: hist.map(h => h.cpu), borderColor: Y }]} fmt={v => v + '%'} /></div>
+
+        <Panel title="Active sessions" right={<span className="text-xs text-[color:var(--muted)]">{ss.length} online</span>}><Table cols={sessCols} rows={ss} freeze={2} compact empty="No active sessions" /></Panel>
+
+        <div className="grid xl:grid-cols-2 gap-3">
+          <Panel title="Top consumers" right={cap ? <span className="text-xs text-[color:var(--accent)]">auto-cap {fmtBytes(cap)}</span> : null}>
+            <Table compact cols={[{ h: 'Voucher', k: 'username' }, { h: 'Host name', k: 'host', r: r => r.host || <span className="text-[color:var(--muted)]">Unknown</span> }, { h: 'Status', r: r => <Badge s={r.status} /> }, { h: 'Usage', k: 'total', r: r => <Usage v={r} cap={cap} /> }]} rows={top} empty="No usage yet" /></Panel>
+          <Panel title="DHCP leases" right={<span className="text-xs text-[color:var(--muted)]">{(sys.pools || []).map(p => `${p.name}: ${p.used} used`).join(' · ')}</span>}>
+            <Table compact search cols={[{ h: 'Host name', k: 'host' }, { h: 'MAC', k: 'mac' }, { h: 'Address', k: 'address' }, { h: 'Server', k: 'server' }]} rows={sys.leases || []} empty="No DHCP leases" /></Panel></div></>}
+
+      {page === 'Vouchers' && <Panel><Table cols={voucherCols} rows={vs} freeze={2} /></Panel>}
       {page === 'Data Usage' && <Panel><Table rows={vs} cols={[{ h: 'Voucher', k: 'username' }, { h: 'Host name', k: 'host', r: r => r.host || <span className="text-[color:var(--muted)]">Unknown</span> }, { h: 'Device', k: 'mac' }, { h: 'Upload', k: 'upload', r: r => fmtBytes(r.upload) }, { h: 'Download', k: 'download', r: r => fmtBytes(r.download) },
         { h: 'Total', k: 'total', r: r => fmtBytes(r.total) }, { h: 'Limit', r: r => isFinite(effLimit(r, cap)) ? fmtBytes(effLimit(r, cap)) : '—' }, { h: 'Remaining', r: r => isFinite(effLimit(r, cap)) ? fmtBytes(Math.max(0, effLimit(r, cap) - r.total)) : '—' }, { h: 'Status', k: 'status', r: r => <Badge s={r.status} /> }]} /></Panel>}
-      {(page === 'Active Users' || page === 'Sessions') && <Panel><Table rows={ss} cols={sessCols} /></Panel>}
-      {page === 'Devices' && <Async path="/devices" cols={[{ h: 'Host name', k: 'host_name', r: r => r.host_name || <span className="text-[color:var(--muted)]">Unknown</span> }, { h: 'MAC', k: 'mac_address' }, { h: 'IP', k: 'last_ip' }, { h: 'Voucher', k: 'last_voucher' }, { h: 'First seen', r: r => new Date(r.first_seen).toLocaleString() }, { h: 'Last seen', r: r => new Date(r.last_seen).toLocaleString() },
-        { h: 'Upload', r: r => fmtBytes(r.upload) }, { h: 'Download', r: r => fmtBytes(r.download) }, { h: 'Sessions', k: 'sessions' }, { h: 'Status', r: r => <Badge s={r.blocked ? 'BLOCKED' : r.online ? 'ONLINE' : 'OFFLINE'} /> }, { h: 'Risk', r: r => <Badge s={r.risk_level} /> }]} />}
+      {(page === 'Active Users' || page === 'Sessions') && <Panel><Table rows={ss} cols={sessCols} freeze={2} /></Panel>}
       {page === 'Security Alerts' && <Async path="/alerts" cols={[{ h: 'Time', r: r => new Date(r.ts).toLocaleString() }, { h: 'Voucher', k: 'username' }, { h: 'MAC', k: 'mac_address' }, { h: 'Severity', r: r => <Badge s={r.severity} /> },
         { h: 'Indicators (heuristic, not proof)', r: r => (r.indicators || []).join('; ') }, { h: 'Action', k: 'action_taken' }]} />}
       {page === 'Blocked Devices' && <Async path="/blocked-devices" cols={[{ h: 'Host name', k: 'host_name', r: r => r.host_name || '—' }, { h: 'MAC', k: 'mac_address' }, { h: 'Voucher', k: 'voucher_username' }, { h: 'Reason', k: 'reason' }, { h: 'By', k: 'blocked_by' }, { h: 'Expires', r: r => r.expires_at ? new Date(r.expires_at).toLocaleString() : 'Permanent' },
