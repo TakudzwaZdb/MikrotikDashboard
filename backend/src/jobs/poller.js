@@ -8,9 +8,10 @@ import { getRouterResources, getIdentity, getSystemDetails } from '../services/m
 import { voucherStatus, isExpired } from '../utils/status.js';
 import { audit } from '../utils/audit.js';
 import { enforceCap } from './dataCap.js';
+import { notify } from '../services/notify.js';
 
 export const live = { router: { online: false, error: null }, vouchers: [], sessions: [], summary: null, lastSync: null };
-let sysCache = null, lastSys = 0, prevActive = new Map(), prevRate = new Map(), lastFull = 0, running = false;
+let fails = 0, alertedOffline = false, sysCache = null, lastSys = 0, prevActive = new Map(), prevRate = new Map(), lastFull = 0, running = false;
 
 async function detectSuspicious(username, mac, sessions) {
   const ind = [];
@@ -30,6 +31,7 @@ async function detectSuspicious(username, mac, sessions) {
     else if (config.autoDisconnect) { await disconnectHotspotSession(username); action = 'disconnected'; }
   }
   await q('INSERT INTO security_alerts(username,mac_address,severity,indicators,action_taken) VALUES($1,$2,$3,$4,$5)', [username, mac, severity, JSON.stringify(ind), action]);
+  if (severity !== 'LOW') notify(`${severity} security alert for voucher ${username}: ${ind.join('; ')} (action: ${action}).`).catch(() => {});
   await q(`UPDATE devices SET risk_level=$2 WHERE mac_address=$1`, [mac, severity]);
   if (action !== 'none') await audit('system', `Suspicious auto-${action}`, { voucher: username, mac, reason: ind.join('; ') });
 }
@@ -104,12 +106,13 @@ export async function syncOnce(io) {
       try { await disconnectHotspotSession(v.username); if (!v.disabled) await disableHotspotUser(v.username);
         await q('UPDATE vouchers_cache SET limit_reached_at=now() WHERE username=$1', [v.username]);
         await audit('system', 'Data limit reached', { voucher: v.username, reason: `${v.total}/${v.limitBytesTotal} bytes` });
+        notify(`voucher ${v.username} reached its data limit and was disconnected.`).catch(() => {});
         await q(`INSERT INTO security_alerts(username,severity,indicators,action_taken) VALUES($1,'LOW',$2,'disconnected+disabled')`, [v.username, JSON.stringify(['DATA LIMIT REACHED'])]);
       } catch (e) { await audit('system', 'Data limit enforcement failed', { voucher: v.username, result: e.message }); }
     }
     const cap = await enforceCap(vouchers, active);
     for (const set of [vouchers, active]) for (let i = set.length - 1; i >= 0; i--) if (cap.removed.has(set[i].username)) set.splice(i, 1);
-    cap.events.forEach(ev => io?.emit('cap-event', ev));
+    cap.events.forEach(ev => { io?.emit('cap-event', ev); notify(`${ev.username} reached the data cap (${(ev.total / 1073741824).toFixed(2)} GB). Actions: ${(ev.steps || []).join(' > ')}.`).catch(() => {}); });
     for (const a of active) if (a.mac) await detectSuspicious(a.username, a.mac, active).catch(e => console.error('detect', e.message));
     const exp = await q(`UPDATE blocked_devices SET active=false WHERE active AND expires_at IS NOT NULL AND expires_at<now() RETURNING mac_address`);
     for (const r of exp.rows) { await unblockMac(r.mac_address).catch(() => {}); await audit('system', 'Temporary block expired', { mac: r.mac_address }); }
@@ -120,11 +123,14 @@ export async function syncOnce(io) {
       suspicious: +(await q('SELECT count(*) c FROM security_alerts WHERE NOT resolved')).rows[0].c,
       blockedDevices: +(await q('SELECT count(*) c FROM blocked_devices WHERE active')).rows[0].c };
     sum.totalData = sum.upload + sum.download;
+    if (alertedOffline) notify(`router is back ONLINE (${identity}).`).catch(() => {});
+    fails = 0; alertedOffline = false;
     Object.assign(live, { router: { online: true, error: null, identity, ...res }, system: sysCache, vouchers, sessions: active, summary: sum, capBytes: config.capBytes, lastSync: new Date().toISOString() });
   } catch (e) {
     const m = config.mikrotik, why = /timed out|ETIMEDOUT|ECONNREFUSED|EHOSTUNREACH|ENOTFOUND|ENETUNREACH/i.test(e.message) ? `Router not reachable from this server at ${m.host || '(MIKROTIK_HOST not set)'}:${m.port} - ${e.message}. Check MIKROTIK_HOST/PORT, the router firewall and that the API service is enabled.` : e.message;
     Object.assign(live, { router: { online: false, error: why }, system: null, vouchers: [], sessions: [], summary: null }); // no fake data when offline
     if (state.lastError) console.error('MikroTik sync failed:', e.message);
+    if (++fails >= config.notify.offlineAfter && !alertedOffline) { alertedOffline = true; notify(`router is OFFLINE - no data for ${fails * config.pollInterval}s. ${String(e.message).slice(0, 120)}`).catch(() => {}); }
   } finally { running = false; io?.emit('update', live); }
 }
 

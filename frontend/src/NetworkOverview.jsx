@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { api, fmtBytes, fmtRate } from './api.js';
+import { api, fmtBytes, fmtRate, since } from './api.js';
 
 // Read-only "command centre" page: live network / hotspot / voucher overview. No controls, navigation only.
 // Look: near-black glass panels, orange / red / cyan / magenta neon, digital numerals (reference: dark supervision wall).
@@ -157,7 +157,7 @@ function Radar({ axes }) {
 
 /* ---------- 8. concentric rings ---------- */
 function Rings({ rows }) {
-  return <div className="flex items-center gap-3 h-full"><svg viewBox="0 0 100 100" className="h-full max-h-full aspect-square shrink-0"><defs><Glow id="rig" sd="1.4" /></defs>
+  return <div className="flex items-center gap-3 h-full"><svg viewBox="0 0 100 100" className="h-full max-h-full max-w-[48%] aspect-square shrink-0"><defs><Glow id="rig" sd="1.4" /></defs>
     {rows.map((r, i) => { const rad = 44 - i * 9.5, c = 2 * Math.PI * rad; return <g key={r.l}><circle cx="50" cy="50" r={rad} fill="none" stroke={K.tr} strokeWidth="5" />
       <circle cx="50" cy="50" r={rad} fill="none" stroke={r.c} strokeWidth="5" strokeLinecap="round" strokeDasharray={`${(Math.min(100, r.p) / 100) * c * .75} ${c}`} transform="rotate(-225 50 50)" filter="url(#rig)" /></g>; })}</svg>
     <div className="flex-1 min-w-0 space-y-1.5">{rows.map(r => <div key={r.l} className="flex items-center justify-between gap-2 text-[10px] font-bold"><span className="flex items-center gap-1.5 truncate"><i className="inline-block w-2 h-2 rounded-full" style={{ background: r.c, boxShadow: `0 0 6px ${r.c}` }} />{r.l}</span><span style={{ color: r.c, ...DIG, fontSize: 11 }}>{r.p}%</span></div>)}</div></div>;
@@ -183,7 +183,7 @@ export default function NetworkOverview({ live, hist, online, conn, onMenu }) {
   return <div className="nv-root">
     <div className="nv-head">
       <div className="flex items-center gap-3 min-w-0"><button type="button" className="nv-menu" onClick={onMenu} aria-label="Open menu" title="Open menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M3 6h18M3 12h18M3 18h18" /></svg></button>
-        <div className="text-[11px] font-bold text-left leading-tight truncate min-w-0"><span style={{ color: K.or }}>◈ {rt.identity || 'Router'}</span><br /><span style={{ color: K.mu }} className="font-semibold">{online ? `${rt.board || ''} · RouterOS ${rt.version || ''} · up ${rt.uptime || ''}` : 'Router offline - no data'}</span></div></div>
+        <div className="text-[11px] font-bold text-left leading-tight truncate min-w-0"><span style={{ color: K.or }}>◈ {rt.identity || 'Router'}</span><br /><span style={{ color: K.mu }} className="font-semibold">{online ? `${rt.board || ''} · RouterOS ${rt.version || ''} · up ${rt.uptime || ''}` : `Router offline${live?.lastSync ? ' · last data ' + since(live.lastSync) : ' - no data yet'}`}</span></div></div>
       <div className="text-center leading-tight"><div className="nv-h1" style={DIG}>EWZ Network Center</div><div className="text-[11px] md:text-[13px] font-bold tracking-[.4em] uppercase mt-1" style={{ color: K.or }}>Online supervision system</div></div>
       <div className="text-right text-[11px] font-bold leading-tight"><span style={{ color: conn && online ? K.gr : K.rd }}>● {conn ? (online ? 'LIVE' : 'ROUTER OFFLINE') : 'RECONNECTING'}</span><br /><span style={{ color: K.mu, ...DIG, fontSize: 10.5 }} className="font-semibold tabular-nums">{now.toLocaleDateString()} {now.toLocaleTimeString([], { hour12: false })}</span></div>
     </div>

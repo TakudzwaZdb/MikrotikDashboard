@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { Chart as C, CategoryScale, LinearScale, BarElement, LineElement, PointElement, Filler, Tooltip, Legend } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
-import { api, getToken, fmtBytes, fmtSecs, fmtRate } from './api.js';
+import { since, api, getToken, fmtBytes, fmtSecs, fmtRate } from './api.js';
 import NetworkOverview from './NetworkOverview.jsx';
 C.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Filler, Tooltip, Legend);
 
@@ -29,7 +29,7 @@ function applyTheme(key, accent) {
 applyTheme(localStorage.getItem('theme') || 'dark', localStorage.getItem('accent'));
 
 const tone = p => (p < 60 ? G : p < 85 ? Y : R);
-const bcol = s => ({ ACTIVE: G, ONLINE: G, BLOCKED: R, DISABLED: MUT, HIGH: R, MEDIUM: O, LOW: B, OFFLINE: MUT }[s] || O);
+const bcol = s => ({ ACTIVE: G, ONLINE: G, BLOCKED: R, DISABLED: MUT, HIGH: R, MEDIUM: O, LOW: B, OFFLINE: MUT, RESOLVED: G, OPEN: O }[s] || O);
 const Badge = ({ s }) => <span className="px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap" style={{ color: bcol(s), background: bcol(s) + '22', border: `1px solid ${bcol(s)}55` }}>{s}</span>;
 const KINDS = { disconnect: 'orange', enable: 'green', disable: 'yellow', block: 'red', unblock: 'blue', export: 'purple', test: 'cyan', sync: 'pink', refresh: 'cyan', view: 'blue' };
 const Btn = ({ children, onClick, danger, kind, disabled }) => { const c = `var(--${KINDS[kind] || (danger ? 'red' : 'blue')})`;
@@ -54,12 +54,15 @@ function TS({ title, labels, sets, fmt = v => v, stats }) {
       : sets.length > 1 && <div className="flex gap-4 text-xs mt-2 text-[color:var(--muted)]">{sets.map(s => <span key={s.label}><span className="inline-block w-3 h-[3px] mr-1 align-middle" style={{ background: s.borderColor }} />{s.label}</span>)}</div>}</Panel>;
 }
 
-function Table({ cols, rows, empty = 'No data', compact, search, freeze = 0 }) {
+function Table({ cols, rows, empty = 'No data', compact, search, freeze = 0, exportAs }) {
   const FW = [130, 170], fz = (i, th) => i < freeze ? { position: 'sticky', left: FW.slice(0, i).reduce((a, b) => a + b, 0), width: FW[i], minWidth: FW[i], maxWidth: FW[i] } : undefined;
   const [q, setQ] = useState(''), [sort, setSort] = useState(null);
   const f = useMemo(() => { let r = rows.filter(x => !q || JSON.stringify(x).toLowerCase().includes(q.toLowerCase()));
     if (sort) r = [...r].sort((a, b) => (a[sort.k] > b[sort.k] ? 1 : a[sort.k] < b[sort.k] ? -1 : 0) * sort.d); return r; }, [rows, q, sort]);
-  return <div>{(!compact || search) && <input className="bg-[color:var(--input)] border border-[color:var(--border)] rounded px-2 py-1 mb-2 w-full sm:w-72 text-sm" placeholder="Search…" value={q} onChange={e => setQ(e.target.value)} />}
+  const exportCsv = () => { const ec = cols.filter(c => c.k), esc = v => `"${String(v ?? '').replace(/"/g, '""').replace(/^([=+\-@])/, "'$1")}"`;
+    const body = [ec.map(c => esc(c.h)).join(','), ...f.map(r => ec.map(c => esc(r[c.k])).join(','))].join('\n');
+    Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob(['\ufeff' + body], { type: 'text/csv' })), download: `${exportAs}-${new Date().toISOString().slice(0, 10)}.csv` }).click(); };
+  return <div>{(!compact || search) && <div className="flex flex-wrap items-center gap-2 mb-2"><input className="bg-[color:var(--input)] border border-[color:var(--border)] rounded px-2 py-1 w-full sm:w-72 text-sm" placeholder="Search…" value={q} onChange={e => setQ(e.target.value)} />{exportAs && <Btn kind="export" onClick={exportCsv}>Export CSV</Btn>}<span className="text-[11px] text-[color:var(--muted)] sm:ml-auto">{f.length} row{f.length === 1 ? '' : 's'}</span></div>}
     <div className={`overflow-auto rounded border border-[color:var(--border)] ${compact ? 'max-h-72' : 'max-h-[calc(100vh-220px)] min-h-[260px]'}`}>
       <table className="w-full text-[13px] border-separate border-spacing-0"><thead><tr>{cols.map((c, i) => <th key={c.h} onClick={() => c.k && setSort({ k: c.k, d: sort?.k === c.k ? -sort.d : 1 })}
         style={fz(i)} className={`sticky top-0 ${i < freeze ? 'z-30' : 'z-20'} ${i === freeze - 1 ? 'border-r border-r-[color:var(--border2)]' : ''} text-left px-3 py-2 font-bold text-[11px] uppercase tracking-wide whitespace-nowrap bg-[color:var(--hover)] text-[color:var(--strong)] border-b border-[color:var(--border2)] ${c.k ? 'cursor-pointer select-none' : ''}`}>
@@ -108,7 +111,7 @@ function Login({ done }) {
     setE(''); setBusy(true);
     try { const r = await api('/auth/login', { method: 'POST', body: { username: u.trim(), password: p } });
       try { rem ? localStorage.setItem('rememberUser', u.trim()) : localStorage.removeItem('rememberUser'); } catch { /* ignore */ }
-      sessionStorage.setItem('jwt', r.token); sessionStorage.setItem('role', r.role); setBusy(false); setOk(true); setTimeout(done, 800);
+      sessionStorage.setItem('jwt', r.token); sessionStorage.setItem('role', r.role); sessionStorage.setItem('user', u.trim()); setBusy(false); setOk(true); setTimeout(done, 800);
     } catch (x) { setBusy(false); fail(x.message); } };
   return <div className="lg-page"><LoginScene />
     <form className={`lg-card ${shake ? 'lg-shake' : ''}`} onSubmit={go} noValidate>
@@ -167,6 +170,7 @@ export default function App() {
   if (!authed) return <Login done={() => setAuthed(true)} />;
 
   const sys = live?.system || {}, online = live?.router?.online, cap = live?.capBytes, vs = live?.vouchers || [], ss = live?.sessions || [], sm = live?.summary || {}, rt = live?.router || {};
+  const role = sessionStorage.getItem('role') || 'admin', canAct = role !== 'viewer', isAdmin = role === 'admin';
   const act = async (path, label, opts = { method: 'POST', body: {} }) => { if (!confirm(`${label}?`)) return;
     try { await api(path, opts); setMsg(`✔ ${label}: confirmed by router`); } catch (e) { setMsg(`✖ ${label} failed: ${e.message}`); } };
   const vAct = (n, a, label) => act(`/vouchers/${encodeURIComponent(n)}/${a}`, `${label} ${n}`);
@@ -184,15 +188,17 @@ export default function App() {
     { h: 'Actions', r: r => <div className="flex gap-1"><Btn kind="disconnect" onClick={() => vAct(r.username, 'disconnect', 'Disconnect')}>Disconnect</Btn>
       <Btn kind="block" onClick={() => act('/blocked-devices', `Block device ${r.mac}`, { method: 'POST', body: { mac: r.mac, reason: 'Blocked from dashboard' } })}>Block</Btn></div> }];
 
+  const vCols = canAct ? voucherCols : voucherCols.filter(c => c.h !== 'Actions'), sCols = canAct ? sessCols : sessCols.filter(c => c.h !== 'Actions');
+
   return <div className="min-h-screen md:flex text-[color:var(--text)]">
     {nav && <div className={`fixed inset-0 z-40 bg-black/60 ${full ? '' : 'md:hidden'}`} onClick={() => setNav(false)} />}
     <aside className={`fixed ${full ? '' : 'md:sticky'} z-50 top-0 left-0 h-screen w-64 ${rail && !full ? 'md:w-[76px]' : 'md:w-64'} shrink-0 flex flex-col bg-[color:var(--input)] border-r border-[color:var(--border)] transition-[transform,width] duration-200 overflow-hidden ${nav ? 'translate-x-0' : '-translate-x-full'} ${full ? '' : 'md:translate-x-0'}`}>
       <div className={`flex items-center gap-3 px-4 h-16 border-b border-[color:var(--border)] ${rail ? 'md:justify-center md:px-0' : ''}`}>
         <span className="grid place-items-center w-9 h-9 rounded-lg text-[color:var(--input)]" style={{ background: 'var(--accent)' }}><Icon n="wifi" s={20} /></span>
-        <div className={`leading-tight ${rail ? 'md:hidden' : ''}`}><div className="text-[15px] font-extrabold text-[color:var(--strong)] tracking-tight">Hotspot Monitor</div><div className="text-[11px] font-semibold text-[color:var(--muted)] uppercase tracking-wider">MikroTik Voucher Console</div></div></div>
+        <div className={`leading-tight ${rail ? 'md:hidden' : ''}`}><div className="text-[15px] font-extrabold text-[color:var(--strong)] tracking-tight">EWZ Network Center</div><div className="text-[11px] font-semibold text-[color:var(--muted)] uppercase tracking-wider">Online supervision</div></div></div>
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
         {NAV.map(g => <div key={g.g}><div className={`px-3 mb-1.5 text-[11px] font-extrabold uppercase tracking-widest text-[color:var(--muted)] ${rail ? 'md:hidden' : ''}`}>{g.g}</div>{rail && <div className="hidden md:block mx-3 mb-2 border-t border-[color:var(--border)]" />}
-          <div className="space-y-0.5">{g.items.map(([p, ic, badge]) => { const on = page === p, n = badge && sm ? sm[badge] : null;
+          <div className="space-y-0.5">{g.items.filter(([p]) => p !== 'Audit Logs' || isAdmin).map(([p, ic, badge]) => { const on = page === p, n = badge && sm ? sm[badge] : null;
             return <button key={p} title={p} onClick={() => { setPage(p); setNav(false); }} aria-current={on ? 'page' : undefined}
               className={`group relative flex items-center gap-3 w-full text-left pl-3 pr-2 py-2.5 ${rail ? 'md:justify-center md:px-0' : ''} rounded-lg text-[14px] transition-colors ${on ? 'font-bold text-[color:var(--strong)]' : 'font-semibold text-[color:var(--text)] hover:bg-[color:var(--panel)] hover:text-[color:var(--strong)]'}`}
               style={on ? { background: 'color-mix(in srgb, var(--accent) 16%, transparent)' } : undefined}>
@@ -227,7 +233,7 @@ export default function App() {
       </header>
       {toasts.map(t => <div key={t.id} className="bg-[color:var(--dangerbg)] border border-[color:var(--red)] rounded p-3 text-sm">🚫 <b>{t.username}</b> reached the data cap ({fmtBytes(t.total)}). Actions on router: {t.steps.join(' → ')}.</div>)}
       {msg && <div className="bg-[color:var(--panel)] border-l-4 border-[color:var(--blue)] p-2 text-sm cursor-pointer" onClick={() => setMsg('')}>{msg}</div>}
-      {!online && !full && <div className="bg-[color:var(--dangerbg)] border border-[color:var(--red)] text-[color:var(--redtext)] p-3 rounded text-sm">MIKROTIK OFFLINE{rt.error ? `: ${String(rt.error).replace(/\.\s*$/, '')}` : ''}. No voucher or usage data is shown until the router responds.</div>}
+      {!online && !full && <div className="bg-[color:var(--dangerbg)] border border-[color:var(--red)] text-[color:var(--redtext)] p-3 rounded text-sm">MIKROTIK OFFLINE{rt.error ? `: ${String(rt.error).replace(/\.\s*$/, '')}` : ''}. No voucher or usage data is shown until the router responds. {live?.lastSync ? `Last data received ${since(live.lastSync)}.` : 'No data has been received since the server started.'}</div>}
 
       {page === 'Network Overview' && <NetworkOverview live={live} hist={hist} online={online} conn={conn} onMenu={() => setNav(true)} />}
       {page === 'Dashboard' && <>
@@ -248,7 +254,7 @@ export default function App() {
           <TS title="Concurrent users" labels={lab} sets={[{ label: 'Users', data: hist.map(h => h.users), borderColor: O }]} />
           <TS title="CPU load" labels={lab} sets={[{ label: 'CPU', data: hist.map(h => h.cpu), borderColor: Y }]} fmt={v => v + '%'} /></div>
 
-        <Panel title="Active sessions" right={<span className="text-xs text-[color:var(--muted)]">{ss.length} online</span>}><Table cols={sessCols} rows={ss} freeze={2} compact empty="No active sessions" /></Panel>
+        <Panel title="Active sessions" right={<span className="text-xs text-[color:var(--muted)]">{ss.length} online</span>}><Table cols={sCols} rows={ss} freeze={2} compact empty="No active sessions" /></Panel>
 
         <div className="grid xl:grid-cols-2 gap-3">
           <Panel title="Top consumers" right={cap ? <span className="text-xs text-[color:var(--accent)]">auto-cap {fmtBytes(cap)}</span> : null}>
@@ -256,27 +262,25 @@ export default function App() {
           <Panel title="DHCP leases" right={<span className="text-xs text-[color:var(--muted)]">{(sys.pools || []).map(p => `${p.name}: ${p.used} used`).join(' · ')}</span>}>
             <Table compact search cols={[{ h: 'Host name', k: 'host' }, { h: 'MAC', k: 'mac' }, { h: 'Address', k: 'address' }, { h: 'Server', k: 'server' }]} rows={sys.leases || []} empty="No DHCP leases" /></Panel></div></>}
 
-      {page === 'Vouchers' && <Panel><Table cols={voucherCols} rows={vs} freeze={2} /></Panel>}
-      {page === 'Data Usage' && <Panel><Table rows={vs} cols={[{ h: 'Voucher', k: 'username' }, { h: 'Host name', k: 'host', r: r => r.host || <span className="text-[color:var(--muted)]">Unknown</span> }, { h: 'Device', k: 'mac' }, { h: 'Upload', k: 'upload', r: r => fmtBytes(r.upload) }, { h: 'Download', k: 'download', r: r => fmtBytes(r.download) },
+      {page === 'Vouchers' && <Panel><Table cols={vCols} rows={vs} freeze={2} exportAs="vouchers" /></Panel>}
+      {page === 'Data Usage' && <Panel><Table rows={vs} freeze={2} exportAs="data-usage" cols={[{ h: 'Voucher', k: 'username' }, { h: 'Host name', k: 'host', r: r => r.host || <span className="text-[color:var(--muted)]">Unknown</span> }, { h: 'Device', k: 'mac' }, { h: 'Upload', k: 'upload', r: r => fmtBytes(r.upload) }, { h: 'Download', k: 'download', r: r => fmtBytes(r.download) },
         { h: 'Total', k: 'total', r: r => fmtBytes(r.total) }, { h: 'Limit', r: r => isFinite(effLimit(r, cap)) ? fmtBytes(effLimit(r, cap)) : '—' }, { h: 'Remaining', r: r => isFinite(effLimit(r, cap)) ? fmtBytes(Math.max(0, effLimit(r, cap) - r.total)) : '—' }, { h: 'Status', k: 'status', r: r => <Badge s={r.status} /> }]} /></Panel>}
-      {(page === 'Active Users' || page === 'Sessions') && <Panel><Table rows={ss} cols={sessCols} freeze={2} /></Panel>}
-      {page === 'Security Alerts' && <Async path="/alerts" cols={[{ h: 'Time', r: r => new Date(r.ts).toLocaleString() }, { h: 'Voucher', k: 'username' }, { h: 'MAC', k: 'mac_address' }, { h: 'Severity', r: r => <Badge s={r.severity} /> },
-        { h: 'Indicators (heuristic, not proof)', r: r => (r.indicators || []).join('; ') }, { h: 'Action', k: 'action_taken' }]} />}
-      {page === 'Blocked Devices' && <Async path="/blocked-devices" cols={[{ h: 'Host name', k: 'host_name', r: r => r.host_name || '—' }, { h: 'MAC', k: 'mac_address' }, { h: 'Voucher', k: 'voucher_username' }, { h: 'Reason', k: 'reason' }, { h: 'By', k: 'blocked_by' }, { h: 'Expires', r: r => r.expires_at ? new Date(r.expires_at).toLocaleString() : 'Permanent' },
-        { h: 'Active', r: r => r.active ? 'yes' : 'no' }, { h: '', r: r => r.active && <Btn kind="unblock" onClick={() => act(`/blocked-devices/${r.mac_address}`, `Unblock ${r.mac_address}`, { method: 'DELETE' })}>Unblock</Btn> }]} />}
+      {(page === 'Active Users' || page === 'Sessions') && <Panel><Table rows={ss} cols={sCols} freeze={2} exportAs="active-users" /></Panel>}
+      {page === 'Security Alerts' && <Async path="/alerts" freeze={2} empty="No security alerts" cols={[{ h: 'Voucher', k: 'username' }, { h: 'Host name', r: r => r.host_name || vs.find(v => v.username === r.username)?.host || <span className="text-[color:var(--muted)]">Unknown</span> }, { h: 'Time', r: r => new Date(r.ts).toLocaleString() }, { h: 'MAC', k: 'mac_address' }, { h: 'Severity', r: r => <Badge s={r.severity} /> },
+        { h: 'Indicators (heuristic, not proof)', r: r => (r.indicators || []).join('; ') }, { h: 'Action taken', k: 'action_taken' }, { h: 'Status', r: r => <Badge s={r.resolved ? 'RESOLVED' : 'OPEN'} /> },
+        ...(canAct ? [{ h: '', r: r => !r.resolved && <Btn kind="enable" onClick={() => act(`/alerts/${r.id}/resolve`, `Resolve alert for ${r.username}`)}>Resolve</Btn> }] : [])]} />}
+      {page === 'Blocked Devices' && <Async path="/blocked-devices" freeze={2} empty="No blocked devices" cols={[{ h: 'Host name', k: 'host_name', r: r => r.host_name || <span className="text-[color:var(--muted)]">Unknown</span> }, { h: 'MAC', k: 'mac_address' }, { h: 'Voucher', k: 'voucher_username' }, { h: 'Reason', k: 'reason' }, { h: 'By', k: 'blocked_by' }, { h: 'Expires', r: r => r.expires_at ? new Date(r.expires_at).toLocaleString() : 'Permanent' },
+        { h: 'Active', r: r => r.active ? 'yes' : 'no' }, { h: '', r: r => canAct && r.active && <Btn kind="unblock" onClick={() => act(`/blocked-devices/${r.mac_address}`, `Unblock ${r.mac_address}`, { method: 'DELETE' })}>Unblock</Btn> }]} />}
       {page === 'Audit Logs' && <Async path="/audit" cols={[{ h: 'Time', r: r => new Date(r.ts).toLocaleString() }, { h: 'Admin', k: 'admin' }, { h: 'Action', k: 'action' }, { h: 'Voucher', k: 'voucher' }, { h: 'MAC', k: 'mac_address' }, { h: 'IP', k: 'ip_address' }, { h: 'Reason', k: 'reason' }, { h: 'Result', k: 'result' }]} />}
       {page === 'Reports' && <Reports />}
-      {page === 'Settings' && <Panel title="MikroTik"><div className="space-y-3 text-sm"><div>Status: <Badge s={online ? 'ONLINE' : 'MIKROTIK OFFLINE'} /></div>
-        {online && <div className="text-[color:var(--muted)]">Identity {rt.identity} · RouterOS {rt.version} · Uptime {rt.uptime} · CPU {rt.cpuLoad}% · Mem {rt.memPercent}% · Last sync {live.lastSync}</div>}
-        <div className="text-[color:var(--muted)]">Data cap: {cap ? fmtBytes(cap) : 'disabled'} (set DATA_CAP_GB in backend .env)</div>
-        <div className="flex gap-2"><Btn kind="test" onClick={() => act('/settings/mikrotik/test', 'Test connection', { method: 'POST' })}>TEST CONNECTION</Btn><Btn kind="sync" onClick={() => act('/settings/mikrotik/sync', 'Sync now', { method: 'POST' })}>SYNC NOW</Btn></div></div></Panel>}
+      {page === 'Settings' && <SettingsPage live={live} online={online} rt={rt} cap={cap} act={act} isAdmin={isAdmin} setMsg={setMsg} />}
     </main></div>;
 }
 
-function Async({ path, cols }) {
+function Async({ path, cols, freeze, empty }) {
   const [rows, setRows] = useState([]), [err, setErr] = useState('');
   useEffect(() => { const l = () => api(path).then(setRows).catch(e => setErr(e.message)); l(); const i = setInterval(l, 10000); return () => clearInterval(i); }, [path]);
-  return <Panel>{err ? <div className="text-[color:var(--red)]">{err}</div> : <Table cols={cols} rows={rows} />}</Panel>;
+  return <Panel>{err ? <div className="text-[color:var(--red)]">{err}</div> : <Table cols={cols} rows={rows} freeze={freeze} empty={empty} />}</Panel>;
 }
 
 function Reports() {
@@ -290,4 +294,46 @@ function Reports() {
     {rows.length > 0 && <Panel title="Chart"><Bar data={{ labels: rows.map(r => String(r[label]).slice(0, 12)), datasets: type === 'daily' ? [{ label: 'Upload (MB)', data: rows.map(r => r.upload / 1048576), backgroundColor: B }, { label: 'Download (MB)', data: rows.map(r => r.download / 1048576), backgroundColor: G }] : [{ label: 'MB used', data: rows.map(r => r.bytes_used / 1048576), backgroundColor: B }] }}
       options={{ scales: { x: axis, y: axis }, plugins: { legend: { labels: { color: axis.ticks.color } } } }} /></Panel>}
     <Panel><Table rows={rows} cols={k.map(c => ({ h: c, k: c, r: r => /bytes|upload|download/.test(c) ? fmtBytes(r[c]) : String(r[c]) }))} /></Panel></div>;
+}
+
+const inp = 'bg-[color:var(--input)] border border-[color:var(--border)] rounded px-2 py-1.5 text-sm text-[color:var(--strong)]';
+function SettingsPage({ live, online, rt, cap, act, isAdmin, setMsg }) {
+  const [ch, setCh] = useState(null), [pw, setPw] = useState({ current: '', next: '', again: '' }), [users, setUsers] = useState([]), [nu, setNu] = useState({ username: '', password: '', role: 'viewer' });
+  const me = sessionStorage.getItem('user');
+  const loadUsers = () => isAdmin && api('/users').then(setUsers).catch(e => setMsg('✖ ' + e.message));
+  useEffect(() => { api('/settings/mikrotik').then(r => setCh(r.notify || [])).catch(() => setCh([])); loadUsers(); }, []); // eslint-disable-line
+  const run = async (label, fn) => { try { await fn(); setMsg(`✔ ${label}`); } catch (e) { setMsg(`✖ ${label} failed: ${e.message}`); } };
+  const changePw = e => { e.preventDefault(); if (pw.next !== pw.again) return setMsg('✖ The new passwords do not match'); run('Password changed', async () => { await api('/auth/change-password', { method: 'POST', body: { current: pw.current, next: pw.next } }); setPw({ current: '', next: '', again: '' }); }); };
+  const addUser = e => { e.preventDefault(); run(`User ${nu.username} created`, async () => { await api('/users', { method: 'POST', body: nu }); setNu({ username: '', password: '', role: 'viewer' }); loadUsers(); }); };
+  return <div className="grid xl:grid-cols-2 gap-3 items-start">
+    <Panel title="MikroTik connection"><div className="space-y-3 text-sm">
+      <div className="flex items-center gap-2">Status: <Badge s={online ? 'ONLINE' : 'OFFLINE'} /></div>
+      {online ? <div className="text-[color:var(--muted)]">Identity {rt.identity} · RouterOS {rt.version} · Uptime {rt.uptime} · CPU {rt.cpuLoad}% · Memory {rt.memPercent}%</div> : <div className="text-[color:var(--redtext)]">{rt.error || 'Router not reachable'}</div>}
+      <div className="text-[color:var(--muted)]">Last successful sync: {live?.lastSync ? `${new Date(live.lastSync).toLocaleString()} (${since(live.lastSync)})` : 'none since the server started'}</div>
+      <div className="text-[color:var(--muted)]">Data cap: {cap ? fmtBytes(cap) : 'disabled'} (set DATA_CAP_GB in .env)</div>
+      <div className="flex gap-2"><Btn kind="test" onClick={() => act('/settings/mikrotik/test', 'Test connection', { method: 'POST' })}>TEST CONNECTION</Btn><Btn kind="sync" onClick={() => act('/settings/mikrotik/sync', 'Sync now', { method: 'POST' })}>SYNC NOW</Btn></div></div></Panel>
+
+    <Panel title="Alerts"><div className="space-y-3 text-sm">
+      <div>{ch == null ? 'Checking…' : ch.length ? <>Active channels: <b className="text-[color:var(--strong)]">{ch.join(', ')}</b>. You are messaged when the router goes offline or comes back, a voucher reaches its data cap, or a medium/high security alert is raised.</> : <span className="text-[color:var(--muted)]">Not set up. Add NOTIFY_TELEGRAM_TOKEN and NOTIFY_TELEGRAM_CHAT (or NOTIFY_WEBHOOK_URL for WhatsApp) to .env and restart - see .env.example.</span>}</div>
+      {isAdmin && <Btn kind="test" disabled={!ch?.length} onClick={() => run('Test message sent', () => api('/settings/notify/test', { method: 'POST' }))}>SEND TEST MESSAGE</Btn>}</div></Panel>
+
+    <Panel title="My account"><form onSubmit={changePw} className="space-y-2 text-sm max-w-sm">
+      <div className="text-[color:var(--muted)]">Signed in as <b className="text-[color:var(--strong)]">{me || 'admin'}</b> ({sessionStorage.getItem('role') || 'admin'}). Passwords need 10+ characters.</div>
+      <input className={`${inp} w-full`} type="password" autoComplete="current-password" placeholder="Current password" value={pw.current} onChange={e => setPw({ ...pw, current: e.target.value })} required />
+      <input className={`${inp} w-full`} type="password" autoComplete="new-password" placeholder="New password" value={pw.next} onChange={e => setPw({ ...pw, next: e.target.value })} minLength={10} required />
+      <input className={`${inp} w-full`} type="password" autoComplete="new-password" placeholder="Repeat new password" value={pw.again} onChange={e => setPw({ ...pw, again: e.target.value })} minLength={10} required />
+      <button className="px-3 py-1.5 rounded text-xs font-bold border" style={{ color: 'var(--green)', borderColor: 'var(--green)', background: 'color-mix(in srgb, var(--green) 14%, transparent)' }}>CHANGE PASSWORD</button></form></Panel>
+
+    {isAdmin && <Panel title="Users">
+      <div className="text-xs text-[color:var(--muted)] mb-2">viewer = read only · operator = can block/disconnect · admin = everything</div>
+      <div className="overflow-auto rounded border border-[color:var(--border)] mb-3"><table className="w-full text-[13px]"><tbody>{users.map(u => <tr key={u.username} className="border-b border-[color:var(--border)] last:border-0">
+        <td className="px-3 py-2 font-bold text-[color:var(--strong)]">{u.username}</td>
+        <td className="px-3 py-2"><select className={inp} value={u.role} disabled={u.username === me} onChange={e => run(`${u.username} is now ${e.target.value}`, async () => { await api(`/users/${u.username}`, { method: 'PUT', body: { role: e.target.value } }); loadUsers(); })}>{['viewer', 'operator', 'admin'].map(r => <option key={r}>{r}</option>)}</select></td>
+        <td className="px-3 py-2 text-right whitespace-nowrap"><Btn kind="sync" onClick={() => { const p = prompt(`New password for ${u.username} (10+ characters)`); if (p) run(`Password reset for ${u.username}`, () => api(`/users/${u.username}`, { method: 'PUT', body: { password: p } })); }}>Reset password</Btn>{' '}
+          {u.username !== me && <Btn kind="block" onClick={() => confirm(`Delete user ${u.username}?`) && run(`${u.username} deleted`, async () => { await api(`/users/${u.username}`, { method: 'DELETE' }); loadUsers(); })}>Delete</Btn>}</td></tr>)}</tbody></table></div>
+      <form onSubmit={addUser} className="flex flex-wrap gap-2 items-center text-sm"><input className={inp} placeholder="Username" value={nu.username} onChange={e => setNu({ ...nu, username: e.target.value })} required minLength={3} />
+        <input className={inp} type="password" autoComplete="new-password" placeholder="Password (10+)" value={nu.password} onChange={e => setNu({ ...nu, password: e.target.value })} required minLength={10} />
+        <select className={inp} value={nu.role} onChange={e => setNu({ ...nu, role: e.target.value })}>{['viewer', 'operator', 'admin'].map(r => <option key={r}>{r}</option>)}</select>
+        <button className="px-3 py-1.5 rounded text-xs font-bold border" style={{ color: 'var(--cyan)', borderColor: 'var(--cyan)', background: 'color-mix(in srgb, var(--cyan) 14%, transparent)' }}>ADD USER</button></form></Panel>}
+  </div>;
 }
