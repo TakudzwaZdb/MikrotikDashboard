@@ -69,7 +69,26 @@ export function initSocket(server) {
   const io = new Server(server, {
     cors: {
       origin: config.corsOrigin
-    }
+    },
+
+    /*
+     * The Windows connector sends the complete MikroTik snapshot
+     * (all vouchers, sessions, DHCP leases...) in ONE message.
+     * Socket.IO's default limit is 1 MB: anything bigger makes the
+     * server drop the connection ("transport close"), the connector
+     * reconnects, sends the same big snapshot again and is dropped
+     * again - an endless connect / disconnect loop.
+     */
+    maxHttpBufferSize: 64 * 1024 * 1024,
+
+    /* compress big messages (snapshots shrink ~10x) */
+    perMessageDeflate: {
+      threshold: 1024
+    },
+
+    /* tolerate a slow / busy Windows laptop or a bad link */
+    pingInterval: 20000,
+    pingTimeout: 60000
   });
 
   /*

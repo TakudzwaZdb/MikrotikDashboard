@@ -98,9 +98,54 @@ const connector = io(
       15000,
 
     timeout:
-      15000
+      15000,
+
+    /* compress big snapshots */
+    perMessageDeflate: {
+      threshold: 1024
+    }
   }
 );
+
+/*
+ * Send a snapshot to Render and warn when it is very large.
+ */
+let lastSizeWarn = 0;
+
+function sendUpdate(data) {
+
+  if (!connector.connected) {
+    return;
+  }
+
+  try {
+
+    const bytes =
+      JSON.stringify(data).length;
+
+    if (
+      bytes > 700 * 1024 &&
+      Date.now() - lastSizeWarn > 600000
+    ) {
+
+      lastSizeWarn = Date.now();
+
+      console.log(
+        `Snapshot size: ${(bytes / 1048576).toFixed(2)} MB ` +
+        '(large - the Render server must allow it; ' +
+        'this version of the server does).'
+      );
+    }
+
+  } catch {
+    /* ignore */
+  }
+
+  connector.emit(
+    'update',
+    data
+  );
+}
 
 /*
  * The poller expects an object with
@@ -113,15 +158,9 @@ const fakeIO = {
 
   emit(event, data) {
 
-    if (
-      event === 'update' &&
-      connector.connected
-    ) {
+    if (event === 'update') {
 
-      connector.emit(
-        'update',
-        data
-      );
+      sendUpdate(data);
     }
 
     /*
@@ -319,6 +358,16 @@ connector.on(
     console.log('');
 
     /*
+     * Immediately show the last known data on Render
+     * (the first sync below may be skipped if the
+     * poller is already in the middle of a run).
+     */
+    if (live.lastSync) {
+
+      sendUpdate(live);
+    }
+
+    /*
      * Perform an immediate synchronization.
      */
     try {
@@ -373,6 +422,25 @@ connector.on(
     console.log(
       `Disconnected from Render: ${reason}`
     );
+
+    if (
+      reason === 'transport close' ||
+      reason === 'transport error'
+    ) {
+
+      console.log(
+        'Hint: the connection was dropped by the network or by the ' +
+        'Render server (message too big / Render restarting / internet ' +
+        'problem). It will reconnect automatically.'
+      );
+    }
+
+    if (reason === 'ping timeout') {
+
+      console.log(
+        'Hint: no reply from Render for 60 s (slow or unstable internet).'
+      );
+    }
 
   }
 );
