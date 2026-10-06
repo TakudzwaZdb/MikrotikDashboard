@@ -8,6 +8,10 @@ const pendingCommands = new Map();
 
 let connectorSocket = null;
 
+/* the router is shown OFFLINE only if the connector stays away this long (a quick reconnect must not flicker the dashboard) */
+const GRACE_MS = 45000;
+let offlineTimer = null;
+
 function makeRequestId() {
   return (
     Date.now().toString(36) +
@@ -159,9 +163,12 @@ export function initSocket(server) {
 
       connectorSocket = socket;
 
+      clearTimeout(offlineTimer);
+
       live.router = {
         ...(live.router || {}),
-        connectorOnline: true
+        connectorOnline: true,
+        stale: false
       };
 
       io.emit('update', live);
@@ -252,13 +259,35 @@ export function initSocket(server) {
             connectorSocket = null;
           }
 
+          /* keep showing the last data during a brief drop */
           live.router = {
             ...(live.router || {}),
-            online: false,
             connectorOnline: false,
-            error:
-              'Windows MikroTik connector disconnected'
+            stale: true
           };
+
+          clearTimeout(offlineTimer);
+
+          offlineTimer = setTimeout(() => {
+
+            if (connectorSocket) {
+              return;
+            }
+
+            live.router = {
+              ...(live.router || {}),
+              online: false,
+              connectorOnline: false,
+              error:
+                'Windows MikroTik connector disconnected'
+            };
+
+            io.emit(
+              'update',
+              live
+            );
+
+          }, GRACE_MS);
 
           io.emit(
             'update',
