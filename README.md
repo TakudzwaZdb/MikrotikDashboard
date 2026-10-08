@@ -9,7 +9,7 @@ npm run build          # builds the website into frontend/dist
 npm start              # applies DB migrations, creates the admin user, starts on http://localhost:8080
 ```
 Development (hot reload): `npm run dev` (API on :8080, website on :5173).
-Hosting guides: LAPTOP-HOSTING.md, RENDER.md, DEPLOY.md.
+Hosting guides: CONNECTOR.md (Render + laptop connector), LAPTOP-HOSTING.md, RENDER.md, DEPLOY.md.
 
 ---
 # MikroTik Voucher Dashboard

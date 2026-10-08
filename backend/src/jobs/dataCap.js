@@ -1,12 +1,7 @@
 
 import { config } from '../config/index.js';
 import { q } from '../database/db.js';
-import { disconnectHotspotSession } from '../services/mikrotik/sessionService.js';
-import {
-  disableHotspotUser,
-  removeHotspotUser,
-  blockMac
-} from '../services/mikrotik/hotspotService.js';
+import { ops } from '../services/routerOps.js';
 import { audit } from '../utils/audit.js';
 
 const DATA_CAP_EXEMPT_USERS = new Set([
@@ -58,17 +53,17 @@ export async function enforceCap(vouchers, active) {
 
     try {
       // Disconnect active HotSpot session.
-      await disconnectHotspotSession(username);
+      await ops.disconnect(username);
       steps.push('disconnected');
 
       // Disable the HotSpot voucher.
-      await disableHotspotUser(username);
+      await ops.disable(username);
       steps.push('blocked');
 
       // Block associated devices.
       if (config.capBlockDeviceHours > 0) {
         for (const mac of macs) {
-          await blockMac(
+          await ops.blockMac(
             mac,
             `data-cap:${username}`
           );
@@ -142,7 +137,7 @@ export async function enforceCap(vouchers, active) {
 
       // Remove the voucher if configured.
       if (config.capRemoveUser) {
-        await removeHotspotUser(username);
+        await ops.remove(username);
         steps.push('removed');
         out.removed.add(username);
       }

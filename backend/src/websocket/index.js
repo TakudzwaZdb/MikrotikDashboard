@@ -1,71 +1,28 @@
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { Server } from 'socket.io';
 
 import { config } from '../config/index.js';
-import { live } from '../jobs/poller.js';
+import { live, ingestRaw, routerFailed, forceOffline } from '../jobs/poller.js';
+import {
+  setConnectorSocket,
+  getConnectorSocket,
+  resolveCommand,
+  rejectAllCommands
+} from '../connector/bridge.js';
 
-const pendingCommands = new Map();
-
-let connectorSocket = null;
+// Re-exported so older imports keep working.
+export { connectorAvailable, connectorCommand } from '../connector/bridge.js';
 
 /* the router is shown OFFLINE only if the connector stays away this long (a quick reconnect must not flicker the dashboard) */
 const GRACE_MS = 45000;
 let offlineTimer = null;
 
-function makeRequestId() {
-  return (
-    Date.now().toString(36) +
-    '-' +
-    Math.random().toString(36).slice(2)
-  );
-}
-
-export function connectorAvailable() {
-  return !!(
-    connectorSocket &&
-    connectorSocket.connected
-  );
-}
-
-export function connectorCommand(
-  command,
-  args = {},
-  timeout = 15000
-) {
-  return new Promise((resolve, reject) => {
-
-    if (!connectorAvailable()) {
-      return reject(
-        new Error('MikroTik connector is offline')
-      );
-    }
-
-    const requestId = makeRequestId();
-
-    const timer = setTimeout(() => {
-
-      pendingCommands.delete(requestId);
-
-      reject(
-        new Error(
-          `Connector command timed out: ${command}`
-        )
-      );
-
-    }, timeout);
-
-    pendingCommands.set(requestId, {
-      resolve,
-      reject,
-      timer
-    });
-
-    connectorSocket.emit('command', {
-      requestId,
-      command,
-      args
-    });
-  });
+/** Constant-time token comparison. */
+function tokenOk(supplied) {
+  const a = Buffer.from(String(supplied || ''));
+  const b = Buffer.from(String(config.connectorToken || ''));
+  return !!config.connectorToken && a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 export function initSocket(server) {
@@ -76,12 +33,11 @@ export function initSocket(server) {
     },
 
     /*
-     * The Windows connector sends the complete MikroTik snapshot
-     * (all vouchers, sessions, DHCP leases...) in ONE message.
-     * Socket.IO's default limit is 1 MB: anything bigger makes the
-     * server drop the connection ("transport close"), the connector
-     * reconnects, sends the same big snapshot again and is dropped
-     * again - an endless connect / disconnect loop.
+     * The connector sends the complete MikroTik snapshot (all vouchers,
+     * sessions, DHCP leases...) in ONE message. Socket.IO's default limit
+     * is 1 MB: anything bigger makes the server drop the connection
+     * ("transport close"), the connector reconnects, sends the same big
+     * snapshot again and is dropped again - an endless loop.
      */
     maxHttpBufferSize: 64 * 1024 * 1024,
 
@@ -90,213 +46,131 @@ export function initSocket(server) {
       threshold: 1024
     },
 
-    /* tolerate a slow / busy Windows laptop or a bad link */
+    /* tolerate a slow / busy laptop or a bad link */
     pingInterval: 20000,
     pingTimeout: 60000
   });
 
   /*
    * Normal dashboard/browser WebSocket authentication.
+   * (io.use applies to the main "/" namespace only.)
    */
   io.use((socket, next) => {
-
     try {
-
-      jwt.verify(
-        socket.handshake.auth?.token,
-        config.jwtSecret
-      );
-
+      jwt.verify(socket.handshake.auth?.token, config.jwtSecret);
       next();
-
     } catch {
-
-      next(
-        new Error('unauthorized')
-      );
+      next(new Error('unauthorized'));
     }
   });
 
   io.on('connection', socket => {
-
     socket.emit('update', live);
-
   });
 
   /*
-   * Dedicated connector namespace.
-   *
-   * This is NOT authenticated using the user's
-   * dashboard JWT. It uses CONNECTOR_TOKEN.
+   * Dedicated connector namespace. NOT authenticated with a user JWT:
+   * it uses CONNECTOR_TOKEN.
    */
-  const connectorNamespace =
-    io.of('/connector');
+  const connectorNamespace = io.of('/connector');
 
-  connectorNamespace.use(
-    (socket, next) => {
+  connectorNamespace.use((socket, next) => {
+    if (!config.connectorToken) {
+      return next(new Error('connector unauthorized: CONNECTOR_TOKEN is not set on the server'));
+    }
+    if (!tokenOk(socket.handshake.auth?.token)) {
+      return next(new Error('connector unauthorized: CONNECTOR_TOKEN does not match the server'));
+    }
+    next();
+  });
 
-      const supplied =
-        socket.handshake.auth?.token;
+  connectorNamespace.on('connection', socket => {
 
-      if (
-        !config.connectorToken ||
-        !supplied ||
-        supplied !== config.connectorToken
-      ) {
-        return next(
-          new Error('connector unauthorized')
-        );
+    const version = +socket.handshake.auth?.version || 1;
+
+    console.log(`MikroTik connector connected: ${socket.id} (protocol v${version})`);
+
+    /* only one connector at a time: the newest wins */
+    const previous = getConnectorSocket();
+    if (previous && previous.id !== socket.id && previous.connected) {
+      console.warn('A second connector connected - closing the older one. Run only ONE connector.');
+      previous.disconnect(true);
+    }
+
+    setConnectorSocket(socket);
+    clearTimeout(offlineTimer);
+
+    if (version < 2) {
+      live.router = {
+        ...(live.router || {}),
+        online: false,
+        connectorOnline: true,
+        error: 'The laptop connector is an old version. Replace the project on the laptop with the updated one and run "npm run connector" again.'
+      };
+      io.emit('update', live);
+      return;
+    }
+
+    live.router = {
+      ...(live.router || {}),
+      connectorOnline: true,
+      stale: false,
+      ...(live.router?.online
+        ? {}
+        : { error: 'Connector connected - reading the router...' })
+    };
+    io.emit('update', live);
+
+    /* a full router snapshot from the laptop */
+    socket.on('raw', raw => {
+      if (raw && typeof raw === 'object') {
+        ingestRaw(raw, io).catch(e => console.error('ingest failed:', e.message));
+      }
+    });
+
+    /* the laptop is connected but could not read the router */
+    socket.on('routerError', message => {
+      live.router = { ...(live.router || {}), connectorOnline: true };
+      routerFailed(String(message?.message || 'Router not reachable from the laptop'), io);
+    });
+
+    socket.on('commandResult', resolveCommand);
+
+    socket.on('disconnect', reason => {
+
+      console.log('MikroTik connector disconnected:', reason);
+
+      /* an OLD socket closing after a newer one took over must change nothing */
+      if (getConnectorSocket() !== socket) {
+        return;
       }
 
-      next();
-    }
-  );
+      setConnectorSocket(null);
+      rejectAllCommands('The laptop connector disconnected');
 
-  connectorNamespace.on(
-    'connection',
-    socket => {
-
-      console.log(
-        'MikroTik connector connected:',
-        socket.id
-      );
-
-      connectorSocket = socket;
+      /* keep showing the last data during a brief drop */
+      live.router = {
+        ...(live.router || {}),
+        connectorOnline: false,
+        stale: true
+      };
 
       clearTimeout(offlineTimer);
 
-      live.router = {
-        ...(live.router || {}),
-        connectorOnline: true,
-        stale: false
-      };
+      offlineTimer = setTimeout(() => {
+        if (getConnectorSocket()) {
+          return;
+        }
+        live.router = { ...(live.router || {}), connectorOnline: false };
+        forceOffline(
+          'The laptop connector is not connected to this server. Check that the laptop is on, online, and "npm run connector" is running.',
+          io
+        );
+      }, GRACE_MS);
 
       io.emit('update', live);
-
-      socket.on(
-        'update',
-        snapshot => {
-
-          if (
-            snapshot &&
-            typeof snapshot === 'object'
-          ) {
-
-            Object.assign(
-              live,
-              snapshot
-            );
-
-            live.router = {
-              ...(live.router || {}),
-              connectorOnline: true
-            };
-
-            io.emit(
-              'update',
-              live
-            );
-          }
-        }
-      );
-
-      socket.on(
-        'commandResult',
-        message => {
-
-          const requestId =
-            message?.requestId;
-
-          if (!requestId) {
-            return;
-          }
-
-          const pending =
-            pendingCommands.get(requestId);
-
-          if (!pending) {
-            return;
-          }
-
-          clearTimeout(
-            pending.timer
-          );
-
-          pendingCommands.delete(
-            requestId
-          );
-
-          if (message.ok) {
-
-            pending.resolve(
-              message.result || {}
-            );
-
-          } else {
-
-            pending.reject(
-              new Error(
-                message.error ||
-                'Connector command failed'
-              )
-            );
-          }
-        }
-      );
-
-      socket.on(
-        'disconnect',
-        reason => {
-
-          console.log(
-            'MikroTik connector disconnected:',
-            reason
-          );
-
-          if (
-            connectorSocket === socket
-          ) {
-            connectorSocket = null;
-          }
-
-          /* keep showing the last data during a brief drop */
-          live.router = {
-            ...(live.router || {}),
-            connectorOnline: false,
-            stale: true
-          };
-
-          clearTimeout(offlineTimer);
-
-          offlineTimer = setTimeout(() => {
-
-            if (connectorSocket) {
-              return;
-            }
-
-            live.router = {
-              ...(live.router || {}),
-              online: false,
-              connectorOnline: false,
-              error:
-                'Windows MikroTik connector disconnected'
-            };
-
-            io.emit(
-              'update',
-              live
-            );
-
-          }, GRACE_MS);
-
-          io.emit(
-            'update',
-            live
-          );
-        }
-      );
-    }
-  );
+    });
+  });
 
   return io;
 }

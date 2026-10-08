@@ -160,6 +160,8 @@ export default function App() {
   const [msg, setMsg] = useState(''), [conn, setConn] = useState(false), [hist, setHist] = useState([]), [toasts, setToasts] = useState([]), [ago, setAgo] = useState(0), lastRx = useRef(Date.now());
   useEffect(() => { if (!authed) return; const s = io({ auth: { token: getToken() } });
     s.on('connect', () => setConn(true)); s.on('disconnect', () => setConn(false));
+    // an expired / invalid login makes the server refuse the live connection: go back to the login page instead of showing RECONNECTING forever
+    s.on('connect_error', err => { if (/unauthorized/i.test(err?.message || '')) { sessionStorage.removeItem('jwt'); location.reload(); } });
     s.on('update', d => { lastRx.current = Date.now(); setLive(d);
       if (d.router?.online) { const ss = d.sessions || [];
         setHist(h => [...h, { t: new Date().toLocaleTimeString([], { hour12: false }), cpu: d.router.cpuLoad, mem: d.router.memPercent, freq: d.router.cpuFreq, hddUsed: (d.router.hddUsed || 0) / 1048576, hddTotal: (d.router.hddTotal || 0) / 1048576,
@@ -234,6 +236,8 @@ export default function App() {
       {toasts.map(t => <div key={t.id} className="bg-[color:var(--dangerbg)] border border-[color:var(--red)] rounded p-3 text-sm">🚫 <b>{t.username}</b> reached the data cap ({fmtBytes(t.total)}). Actions on router: {t.steps.join(' → ')}.</div>)}
       {msg && <div className="bg-[color:var(--panel)] border-l-4 border-[color:var(--blue)] p-2 text-sm cursor-pointer" onClick={() => setMsg('')}>{msg}</div>}
       {!online && !full && <div className="bg-[color:var(--dangerbg)] border border-[color:var(--red)] text-[color:var(--redtext)] p-3 rounded text-sm">MIKROTIK OFFLINE{rt.error ? `: ${String(rt.error).replace(/\.\s*$/, '')}` : ''}. No voucher or usage data is shown until the router responds. {live?.lastSync ? `Last data received ${since(live.lastSync)}.` : 'No data has been received since the server started.'}</div>}
+      {online && live?.dbError && <div className="bg-[color:var(--dangerbg)] border border-[color:var(--red)] text-[color:var(--redtext)] p-3 rounded text-sm">{live.dbError}</div>}
+      {online && rt.stale && <div className="bg-[color:var(--panel)] border-l-4 p-2 text-sm" style={{ borderColor: 'var(--yellow)' }}>Showing the last good data - {rt.staleError || 'the connection to the router is unstable'}.</div>}
 
       {page === 'Network Overview' && <NetworkOverview live={live} hist={hist} online={online} conn={conn} onMenu={() => setNav(true)} />}
       {page === 'Dashboard' && <>

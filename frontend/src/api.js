@@ -2,10 +2,18 @@
 export const getToken = () => sessionStorage.getItem('jwt');
 // Free hosting sleeps when idle: the first requests after a wake-up/restart can fail with a network error. Retry a few times before giving up.
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Every request has a time limit: a hung request must end in a clear message, never an endless spinner.
+const TIMEOUT_MS = 45000;
 async function fetchRetry(url, init, tries = 4) {
   for (let i = 0; ; i++) {
-    try { return await fetch(url, init); }
-    catch (e) { if (i >= tries - 1) throw new Error(`Cannot reach the server (${location.origin}). It may be waking up - wait a minute and try again. [${e.message}]`); await sleep(2000 * (i + 1)); }
+    try { return await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) }); }
+    catch (e) {
+      const timedOut = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+      if (i >= tries - 1) throw new Error(timedOut
+        ? `The server did not answer within ${TIMEOUT_MS / 1000} s. It may be waking up (free hosting) - wait a minute and try again.`
+        : `Cannot reach the server (${location.origin}). It may be waking up - wait a minute and try again. [${e.message}]`);
+      await sleep(2000 * (i + 1));
+    }
   }
 }
 export async function api(path, opts = {}) {

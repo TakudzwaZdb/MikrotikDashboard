@@ -138,6 +138,17 @@ const server =
     app
   );
 
+/*
+ * Render's load balancer reuses connections; Node's default 5 s keep-alive
+ * closes them first and causes sporadic 502 errors.
+ */
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 125000;
+
+/* one bad request or socket must never take the whole dashboard down */
+process.on('unhandledRejection', e => console.error('Unhandled rejection:', e?.message || e));
+process.on('uncaughtException', e => console.error('Uncaught exception:', e?.message || e));
+
 const io =
   initSocket(
     server
@@ -189,11 +200,18 @@ server.listen(
           );
 
           console.log(
-            'Direct MikroTik polling disabled.'
+            'Direct MikroTik polling disabled - the laptop connector sends the router data.'
           );
 
+          if (!config.connectorToken) {
+            console.error(
+              'WARNING: CONNECTOR_TOKEN is not set on this server, so the laptop connector ' +
+              'can never connect. Set CONNECTOR_TOKEN (same value on the laptop).'
+            );
+          }
+
           console.log(
-            'Waiting for Windows connector...'
+            'Waiting for the laptop connector...'
           );
 
         } else {

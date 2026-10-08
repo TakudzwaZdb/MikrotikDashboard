@@ -20,16 +20,12 @@ services:
         value: admin
       - key: ADMIN_PASSWORD    # you type this in the Render dashboard (10+ chars)
         sync: false
-      - key: MIKROTIK_HOST     # router address reachable FROM THE INTERNET (see RENDER.md warning)
+      # Render can NOT reach a router behind another router, so it never connects to it.
+      # The laptop connector (npm run connector, see CONNECTOR.md) reads the router and sends the data here.
+      - key: CONNECTOR_MODE
+        value: "true"
+      - key: CONNECTOR_TOKEN   # long random secret; put the SAME value in the laptop's .env
         sync: false
-      - key: MIKROTIK_PORT
-        value: "8728"
-      - key: MIKROTIK_USERNAME
-        value: dashboard
-      - key: MIKROTIK_PASSWORD
-        sync: false
-      - key: MIKROTIK_USE_TLS
-        value: "false"
       - key: USAGE_POLL_INTERVAL
         value: "10"
       - key: AUTO_DISCONNECT_SUSPICIOUS

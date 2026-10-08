@@ -57,6 +57,14 @@ export const config = {
   connectorToken:
     process.env.CONNECTOR_TOKEN || null,
 
+  // optional push alerts (see services/notify.js)
+  notify: {
+    telegramToken: process.env.NOTIFY_TELEGRAM_TOKEN || '',
+    telegramChat: process.env.NOTIFY_TELEGRAM_CHAT || '',
+    webhookUrl: process.env.NOTIFY_WEBHOOK_URL || '',
+    offlineAfterFails: Math.max(1, +process.env.NOTIFY_OFFLINE_AFTER_FAILS || 3),
+  },
+
   mikrotik: {
     host: process.env.MIKROTIK_HOST,
 
@@ -77,9 +85,15 @@ export const config = {
   },
 };
 
+/*
+ * Only the web server needs JWT_SECRET. The laptop connector
+ * (CONNECTOR_PROCESS=1, set by agent.js) only talks to the router
+ * and to Render, so it must not demand it.
+ */
 if (
-  !config.jwtSecret ||
-  config.jwtSecret.length < 24
+  !process.env.CONNECTOR_PROCESS &&
+  (!config.jwtSecret ||
+    config.jwtSecret.length < 24)
 ) {
   throw new Error(
     'JWT_SECRET must be set (24+ chars)'

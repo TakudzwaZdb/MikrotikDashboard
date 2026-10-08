@@ -1,589 +1,280 @@
+/*
+ * MikroTik connector - runs on the laptop that is on the router's network.
+ *
+ *   router (LAN)  <--RouterOS API-->  THIS PROGRAM  --outgoing websocket-->  Render
+ *
+ * The connection to Render is OUTGOING, so no port-forwarding, VPN or public
+ * IP is needed even if the router sits behind another router.
+ *
+ *  - every POLL seconds it reads the router and sends the snapshot to Render
+ *  - it performs commands sent by the dashboard (disable voucher, block MAC ...)
+ *  - it needs NO database and NO JWT_SECRET
+ *
+ * Settings (.env next to package.json):
+ *   RENDER_URL=https://your-service.onrender.com
+ *   CONNECTOR_TOKEN=<same value as on Render>
+ *   MIKROTIK_HOST / MIKROTIK_PORT / MIKROTIK_USERNAME / MIKROTIK_PASSWORD / MIKROTIK_USE_TLS
+ */
+import './env.js'; // must stay first: tells config/index.js this is the connector
+
 import 'dotenv/config';
 
 import { io } from 'socket.io-client';
 
 import { config } from '../config/index.js';
+import { collectRaw, describeRouterError } from '../services/mikrotik/collect.js';
+import { directOps } from '../services/routerOps.js';
 
-import {
-  live,
-  syncOnce,
-  startPoller
-} from '../jobs/poller.js';
+const RENDER_URL = String(process.env.RENDER_URL || '').trim().replace(/\/+$/, '');
+const CONNECTOR_TOKEN = String(process.env.CONNECTOR_TOKEN || '').trim();
 
-import * as hs from '../services/mikrotik/hotspotService.js';
-
-import {
-  disconnectHotspotSession
-} from '../services/mikrotik/sessionService.js';
-
-const RENDER_URL =
-  process.env.RENDER_URL;
-
-const CONNECTOR_TOKEN =
-  process.env.CONNECTOR_TOKEN;
-
-if (!RENDER_URL) {
-  throw new Error(
-    'RENDER_URL must be configured'
-  );
+function fatal(message) {
+  console.error('');
+  console.error(`CONFIG ERROR: ${message}`);
+  console.error('');
+  process.exit(1);
 }
 
-if (!CONNECTOR_TOKEN) {
-  throw new Error(
-    'CONNECTOR_TOKEN must be configured'
-  );
-}
+if (!RENDER_URL) fatal('RENDER_URL is not set in .env (e.g. RENDER_URL=https://your-service.onrender.com)');
+if (!/^https?:\/\//i.test(RENDER_URL)) fatal(`RENDER_URL must start with https:// (got "${RENDER_URL}")`);
+if (!CONNECTOR_TOKEN) fatal('CONNECTOR_TOKEN is not set in .env (it must equal CONNECTOR_TOKEN on Render)');
+if (!config.mikrotik.host) fatal('MIKROTIK_HOST is not set in .env (e.g. MIKROTIK_HOST=192.168.88.1)');
+if (!config.mikrotik.user) fatal('MIKROTIK_USERNAME is not set in .env');
 
-if (!config.mikrotik.host) {
-  throw new Error(
-    'MIKROTIK_HOST must be configured'
-  );
-}
+const POLL_MS = config.pollInterval * 1000;
+
+const stamp = () => new Date().toLocaleTimeString();
+const log = (...a) => console.log(`[${stamp()}]`, ...a);
 
 console.log('');
-console.log(
-  '=========================================='
-);
-console.log(
-  '     MikroTik Dashboard Connector'
-);
-console.log(
-  '=========================================='
-);
-
-console.log(
-  `Render: ${RENDER_URL}`
-);
-
-console.log(
-  `MikroTik: ${config.mikrotik.host}:${config.mikrotik.port}`
-);
-
-console.log(
-  `TLS: ${config.mikrotik.tls}`
-);
-
-console.log(
-  `Poll interval: ${config.pollInterval}s`
-);
-
-console.log(
-  '=========================================='
-);
+console.log('==========================================');
+console.log('     MikroTik Dashboard Connector');
+console.log('==========================================');
+console.log(`Render:   ${RENDER_URL}`);
+console.log(`MikroTik: ${config.mikrotik.host}:${config.mikrotik.port} (TLS ${config.mikrotik.tls ? 'on' : 'off'}, user ${config.mikrotik.user})`);
+console.log(`Poll:     every ${config.pollInterval}s`);
+console.log('==========================================');
 console.log('');
 
 /*
- * Connect to the Render connector namespace.
+ * node-routeros and sockets can raise errors outside any promise.
+ * The connector must never die because of one bad router reply.
  */
-const connector = io(
-  `${RENDER_URL}/connector`,
-  {
-    auth: {
-      token: CONNECTOR_TOKEN
-    },
+process.on('uncaughtException', e => console.error(`[${stamp()}] Unexpected error (connector keeps running):`, e?.message || e));
+process.on('unhandledRejection', e => console.error(`[${stamp()}] Unexpected rejection (connector keeps running):`, e?.message || e));
 
-    transports: [
-      'websocket'
-    ],
+/* ------------------------------------------------------------------ */
+/* Connection to Render                                                 */
+/* ------------------------------------------------------------------ */
 
-    reconnection: true,
+const connector = io(`${RENDER_URL}/connector`, {
+  auth: { token: CONNECTOR_TOKEN, version: 2 },
 
-    reconnectionAttempts:
-      Infinity,
+  /* websocket first; long-polling only as a fallback for networks that block websockets */
+  transports: ['websocket', 'polling'],
 
-    reconnectionDelay:
-      3000,
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 3000,
+  reconnectionDelayMax: 15000,
 
-    reconnectionDelayMax:
-      15000,
+  /* a sleeping Render free instance needs up to ~60 s to wake up */
+  timeout: 70000,
 
-    timeout:
-      15000,
+  perMessageDeflate: { threshold: 1024 }
+});
 
-    /* compress big snapshots */
-    perMessageDeflate: {
-      threshold: 1024
+/* ------------------------------------------------------------------ */
+/* Reading the router and sending snapshots                             */
+/* ------------------------------------------------------------------ */
+
+let collecting = null;
+let routerWasOk = null;
+
+/** Read the router once and send the result (or the error) to Render. Never throws. */
+function collectAndSend(reason = 'poll') {
+  if (!connector.connected) return Promise.resolve(false);
+  if (collecting) return collecting; // never two reads at once
+
+  collecting = (async () => {
+    try {
+      const raw = await collectRaw();
+
+      if (routerWasOk !== true) {
+        log(`Router OK - ${raw.identity || 'MikroTik'} (${raw.users.length} vouchers, ${raw.active.length} online). Sending to Render.`);
+      }
+      routerWasOk = true;
+
+      if (connector.connected) connector.emit('raw', raw);
+      return true;
+    } catch (e) {
+      const why = describeRouterError(e);
+
+      if (routerWasOk !== false) {
+        log(`ROUTER NOT REACHABLE: ${why}`);
+      }
+      routerWasOk = false;
+
+      if (connector.connected) connector.emit('routerError', { message: why });
+      return false;
+    } finally {
+      collecting = null;
     }
-  }
-);
+  })();
 
-/*
- * Send a snapshot to Render and warn when it is very large.
- */
-let lastSizeWarn = 0;
-
-function sendUpdate(data) {
-
-  if (!connector.connected) {
-    return;
-  }
-
-  try {
-
-    const bytes =
-      JSON.stringify(data).length;
-
-    if (
-      bytes > 700 * 1024 &&
-      Date.now() - lastSizeWarn > 600000
-    ) {
-
-      lastSizeWarn = Date.now();
-
-      console.log(
-        `Snapshot size: ${(bytes / 1048576).toFixed(2)} MB ` +
-        '(large - the Render server must allow it; ' +
-        'this version of the server does).'
-      );
-    }
-
-  } catch {
-    /* ignore */
-  }
-
-  connector.emit(
-    'update',
-    data
-  );
+  return collecting;
 }
 
-/*
- * The poller expects an object with
- * an emit() function.
- *
- * Every successful sync sends the
- * complete live snapshot to Render.
- */
-const fakeIO = {
+/* poll loop - started once, runs for the life of the process */
+setInterval(() => { collectAndSend('poll'); }, POLL_MS);
 
-  emit(event, data) {
+connector.on('connect', () => {
+  log(`CONNECTED TO RENDER (socket ${connector.id})`);
+  collectAndSend('connect');
+});
 
-    if (event === 'update') {
+connector.on('disconnect', reason => {
+  log(`Disconnected from Render: ${reason}`);
 
-      sendUpdate(data);
-    }
+  if (reason === 'io server disconnect') {
+    /* The server only does this when a NEWER connector connected. Reconnecting would start a tug-of-war
+       between two copies, so this copy stops. (exit code 3 tells windows\connector.bat not to restart it) */
+    log('Another connector connected to the same server and took over. Only ONE connector may run - this copy is stopping.');
+    process.exit(3);
+  } else if (reason === 'ping timeout') {
+    log('No reply from Render for 60 s (slow or unstable internet). Reconnecting...');
+  } else if (reason === 'transport close' || reason === 'transport error') {
+    log('Connection dropped (network, or Render restarting). Reconnecting...');
+  }
+});
 
-    /*
-     * Forward cap events to Render.
-     */
-    if (
-      event === 'cap-event' &&
-      connector.connected
-    ) {
+let lastConnectError = '';
+connector.on('connect_error', error => {
+  const msg = error?.message || String(error);
 
-      connector.emit(
-        'cap-event',
-        data
-      );
+  /* print each distinct problem once, then every 10th repeat */
+  if (msg !== lastConnectError) {
+    lastConnectError = msg;
+    log(`Cannot connect to Render: ${msg}`);
+
+    if (/unauthorized/i.test(msg)) {
+      log('=> CONNECTOR_TOKEN on this laptop is different from CONNECTOR_TOKEN on Render, or it is not set on Render. Make them identical.');
+    } else if (/xhr poll error|websocket error|ENOTFOUND|ECONNREFUSED|ETIMEDOUT/i.test(msg)) {
+      log(`=> Check the internet connection and that RENDER_URL (${RENDER_URL}) is exactly your Render address. A sleeping Render service can take about a minute to wake up.`);
     }
   }
+});
 
+connector.io.on('reconnect', () => { lastConnectError = ''; });
+
+/* ------------------------------------------------------------------ */
+/* Commands from the dashboard                                          */
+/* ------------------------------------------------------------------ */
+
+const str = v => {
+  const s = String(v ?? '').trim();
+  if (!s) throw new Error('Missing value');
+  return s;
 };
 
-/*
- * Keep a reference to the local poller.
- *
- * This prevents multiple polling
- * intervals from being created if
- * Socket.IO reconnects.
- */
-let connectorPoller = null;
-
-/*
- * Commands received from Render.
- */
-async function performCommand(
-  command,
-  args = {}
-) {
-
+async function performCommand(command, args = {}) {
   switch (command) {
 
-    case 'disconnect-voucher': {
+    case 'disconnect-voucher':
+      return await directOps.disconnect(str(args.name));
 
-      const name =
-        String(args.name);
-
-      return await
-        disconnectHotspotSession(
-          name
-        );
-    }
-
-    case 'disable-voucher': {
-
-      const name =
-        String(args.name);
-
-      await hs.disableHotspotUser(
-        name
-      );
-
+    case 'disable-voucher':
+      await directOps.disable(str(args.name));
       return {};
-    }
 
-    case 'enable-voucher': {
-
-      const name =
-        String(args.name);
-
-      await hs.enableHotspotUser(
-        name
-      );
-
+    case 'enable-voucher':
+      await directOps.enable(str(args.name));
       return {};
-    }
+
+    case 'remove-voucher':
+      await directOps.remove(str(args.name));
+      return {};
 
     case 'block-voucher': {
-
-      const name =
-        String(args.name);
-
-      await hs.disableHotspotUser(
-        name
-      );
-
-      await disconnectHotspotSession(
-        name
-      );
-
+      const name = str(args.name);
+      await directOps.disable(name);
+      await directOps.disconnect(name);
       return {};
     }
 
-    case 'unblock-voucher': {
-
-      const name =
-        String(args.name);
-
-      await hs.enableHotspotUser(
-        name
-      );
-
+    case 'unblock-voucher':
+      await directOps.enable(str(args.name));
       return {};
-    }
 
-    case 'reset-voucher-usage': {
-
-      const name =
-        String(args.name);
-
-      await hs.resetUserCounters(
-        name
-      );
-
+    case 'reset-voucher-usage':
+      await directOps.resetUsage(str(args.name));
       return {};
-    }
 
-    case 'block-mac': {
-
-      const mac =
-        String(args.mac);
-
-      await hs.blockMac(
-        mac,
-        `dashboard:${
-          String(
-            args.by || 'remote'
-          )
-        }`
-      );
-
-      if (args.username) {
-
-        await disconnectHotspotSession(
-          String(args.username)
-        );
-      }
-
+    case 'block-mac':
+      await directOps.blockMac(str(args.mac), String(args.comment || `dashboard:${args.by || 'remote'}`));
       return {};
-    }
 
-    case 'unblock-mac': {
-
-      const mac =
-        String(args.mac);
-
-      await hs.unblockMac(
-        mac
-      );
-
+    case 'unblock-mac':
+      await directOps.unblockMac(str(args.mac));
       return {};
-    }
 
-    case 'profiles': {
-
-      return await
-        hs.getHotspotProfiles();
-    }
+    case 'profiles':
+      return await directOps.profiles();
 
     case 'sync': {
-
-      await syncOnce(
-        fakeIO
-      );
-
-      return {
-        online:
-          live.router.online,
-
-        lastSync:
-          live.lastSync
-      };
+      const ok = await collectAndSend('sync');
+      return { online: ok };
     }
 
     default:
-
-      throw new Error(
-        `Unknown connector command: ${command}`
-      );
+      throw new Error(`Unknown connector command: ${command}`);
   }
 }
 
-/*
- * Connected to Render.
- */
-connector.on(
-  'connect',
-  async () => {
+connector.on('command', async message => {
+  const requestId = message?.requestId;
+  const command = message?.command;
+  const args = message?.args || {};
 
-    console.log('');
-    console.log(
-      'CONNECTED TO RENDER'
-    );
+  if (!requestId || !command) return;
 
-    console.log(
-      `Connector socket: ${connector.id}`
-    );
+  log(`Command from dashboard: ${command}`);
 
-    console.log('');
+  try {
+    const result = await performCommand(command, args);
 
-    /*
-     * Immediately show the last known data on Render
-     * (the first sync below may be skipped if the
-     * poller is already in the middle of a run).
-     */
-    if (live.lastSync) {
-
-      sendUpdate(live);
+    /* send the fresh router state BEFORE the answer, so the dashboard shows the change immediately */
+    if (command !== 'sync' && command !== 'profiles') {
+      await collectAndSend('after-command');
     }
 
-    /*
-     * Perform an immediate synchronization.
-     */
-    try {
-
-      await syncOnce(
-        fakeIO
-      );
-
-      console.log(
-        'Initial MikroTik synchronization completed.'
-      );
-
-    } catch (error) {
-
-      console.error(
-        'Initial MikroTik sync failed:',
-        error.message
-      );
-    }
-
-    /*
-     * Start continuous MikroTik polling.
-     *
-     * This is the important fix.
-     *
-     * The connector now synchronizes
-     * with MikroTik every config.pollInterval
-     * seconds.
-     */
-    if (!connectorPoller) {
-
-      connectorPoller =
-        startPoller(
-          fakeIO
-        );
-
-      console.log(
-        `Continuous MikroTik polling started every ${config.pollInterval}s.`
-      );
-    }
-
+    connector.emit('commandResult', { requestId, ok: true, result: result ?? {} });
+  } catch (error) {
+    const why = describeRouterError(error);
+    log(`Command failed (${command}): ${why}`);
+    connector.emit('commandResult', { requestId, ok: false, error: why });
   }
-);
+});
 
-/*
- * Disconnected from Render.
- */
-connector.on(
-  'disconnect',
-  reason => {
+/* ------------------------------------------------------------------ */
+/* Keep a free Render instance awake                                    */
+/* ------------------------------------------------------------------ */
 
-    console.log(
-      `Disconnected from Render: ${reason}`
-    );
+if (String(process.env.KEEPALIVE || 'true').toLowerCase() !== 'false') {
+  setInterval(() => {
+    fetch(`${RENDER_URL}/health`, { signal: AbortSignal.timeout(20000) }).catch(() => { /* offline - ignore */ });
+  }, 10 * 60 * 1000);
+}
 
-    if (
-      reason === 'transport close' ||
-      reason === 'transport error'
-    ) {
+/* ------------------------------------------------------------------ */
+/* Shutdown                                                             */
+/* ------------------------------------------------------------------ */
 
-      console.log(
-        'Hint: the connection was dropped by the network or by the ' +
-        'Render server (message too big / Render restarting / internet ' +
-        'problem). It will reconnect automatically.'
-      );
-    }
-
-    if (reason === 'ping timeout') {
-
-      console.log(
-        'Hint: no reply from Render for 60 s (slow or unstable internet).'
-      );
-    }
-
-  }
-);
-
-/*
- * Connection error.
- */
-connector.on(
-  'connect_error',
-  error => {
-
-    console.error(
-      `Render connector error: ${error.message}`
-    );
-
-  }
-);
-
-/*
- * Render asks Windows to perform
- * a MikroTik operation.
- */
-connector.on(
-  'command',
-  async message => {
-
-    const requestId =
-      message?.requestId;
-
-    const command =
-      message?.command;
-
-    const args =
-      message?.args || {};
-
-    if (
-      !requestId ||
-      !command
-    ) {
-
-      return;
-    }
-
-    console.log(
-      `Remote command: ${command}`
-    );
-
-    try {
-
-      const result =
-        await performCommand(
-          command,
-          args
-        );
-
-      /*
-       * Synchronize dashboard after
-       * an operation.
-       */
-      try {
-
-        await syncOnce(
-          fakeIO
-        );
-
-      } catch (syncError) {
-
-        console.error(
-          'Post-command sync failed:',
-          syncError.message
-        );
-
-      }
-
-      connector.emit(
-        'commandResult',
-        {
-          requestId,
-
-          ok: true,
-
-          result:
-            result ?? {}
-        }
-      );
-
-    } catch (error) {
-
-      console.error(
-        `Command failed (${command}):`,
-        error.message
-      );
-
-      connector.emit(
-        'commandResult',
-        {
-          requestId,
-
-          ok: false,
-
-          error:
-            error.message
-        }
-      );
-
-    }
-
-  }
-);
-
-/*
- * Graceful shutdown.
- */
 function shutdown() {
-
-  console.log(
-    'Stopping MikroTik connector...'
-  );
-
-  /*
-   * Stop local polling.
-   */
-  if (connectorPoller) {
-
-    clearInterval(
-      connectorPoller
-    );
-
-    connectorPoller =
-      null;
-  }
-
+  console.log('Stopping MikroTik connector...');
   connector.disconnect();
-
   process.exit(0);
 }
 
-process.on(
-  'SIGINT',
-  shutdown
-);
-
-process.on(
-  'SIGTERM',
-  shutdown
-);
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

@@ -180,7 +180,9 @@ export default function NetworkOverview({ live, hist, online, conn, onMenu }) {
   const bars = daily.length ? daily.slice(-14) : top;
   const cpu = num(rt.cpuLoad), mem = num(rt.memPercent), hdd = num(rt.hddPercent), usersP = pct(onl, total);
 
+  const note = !online ? `ROUTER OFFLINE${rt.error ? ': ' + String(rt.error).replace(/\.\s*$/, '') : ''}` : live?.dbError ? live.dbError : null;
   return <div className="nv-root">
+    {note && <div role="alert" style={{ position: 'fixed', left: 12, right: 12, bottom: 12, zIndex: 60, padding: '10px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, lineHeight: 1.35, background: '#2a1215', border: '1px solid #f2495c', color: '#ff8a97', boxShadow: '0 4px 18px rgba(0,0,0,.5)' }}>{note}</div>}
     <div className="nv-head">
       <div className="flex items-center gap-3 min-w-0"><button type="button" className="nv-menu" onClick={onMenu} aria-label="Open menu" title="Open menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M3 6h18M3 12h18M3 18h18" /></svg></button>
         <div className="text-[11px] font-bold text-left leading-tight truncate min-w-0"><span style={{ color: K.or }}>◈ {rt.identity || 'Router'}</span><br /><span style={{ color: K.mu }} className="font-semibold">{online ? `${rt.board || ''} · RouterOS ${rt.version || ''} · up ${rt.uptime || ''}` : `Router offline${live?.lastSync ? ' · last data ' + since(live.lastSync) : ' - no data yet'}`}</span></div></div>

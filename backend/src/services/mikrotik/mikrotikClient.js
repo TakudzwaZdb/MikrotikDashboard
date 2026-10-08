@@ -9,8 +9,10 @@ export const state = { online: false, lastError: null, lastOkAt: null };
 export function connect() {
   const { host, port, user, password, tls } = config.mikrotik;
   if (!host || !user) throw new Error('MIKROTIK_HOST / MIKROTIK_USERNAME not configured');
-  return new RouterOSAPI({ host, port, user, password, timeout: 10,
+  const api = new RouterOSAPI({ host, port, user, password, timeout: 10,
     tls: tls ? { rejectUnauthorized: false } : undefined }); // self-signed router cert; see README to pin a CA
+  api.on('error', () => { /* connect()/write() already reject with the error; an unhandled 'error' event would crash the process */ });
+  return api;
 }
 
 export async function disconnect(conn) { try { await conn.close(); } catch { /* ignore */ } }
